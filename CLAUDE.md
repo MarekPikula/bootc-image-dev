@@ -80,6 +80,21 @@ questions. Read it before starting work, and update it when a decision changes.
    `squid -k parse`).
 2. Build the image locally with `podman build`, then run
    `tests/image/checks.sh` against it.
-3. Keep each change small (one PR's worth) and follow the order in PLAN.md.
-4. Say how the change was tested and what still needs the CI VM test, and
+3. Run `/simplify`, then `/code-review low`, on the uncommitted changes.
+   Apply what's worth fixing and re-run steps 1–2 if anything changed.
+4. Keep each change small (one PR's worth) and follow the order in PLAN.md.
+5. Say how the change was tested and what still needs the CI VM test, and
    suggest a commit message the user can use.
+
+## Before a PR is pushed or opened
+
+Once the user has committed a patchset and asks to prepare the PR:
+
+1. Run the handoff steps above (lint, build, image checks, `/simplify`,
+   `/code-review low`) against the whole branch, then also run
+   `/code-review xhigh` on it.
+2. Prepare the fixes as fixups for the patchset. Don't create commits: leave
+   the fixes uncommitted, grouped by the commit each one belongs to, and give
+   the user the matching `git commit --fixup=<sha>` commands (for the files
+   of each group) so they can commit, sign and autosquash them.
+3. Report findings that weren't fixed, with the reason.
