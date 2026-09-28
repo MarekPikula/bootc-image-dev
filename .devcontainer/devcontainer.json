@@ -41,8 +41,8 @@
     "--security-opt=label=disable",
 
     // Needed only by init-firewall.sh (runs as root via the sudoers rule).
-    "--cap-add=NET_ADMIN",
-    "--cap-add=NET_RAW",
+    // "--cap-add=NET_ADMIN",
+    // "--cap-add=NET_RAW",
 
     "--hostname=bootc-dev",
       "--security-opt=seccomp=/usr/share/containers/seccomp.json"
@@ -76,7 +76,7 @@
   },
 
   // Apply the default-deny firewall on every start, then sanity-check tooling.
-  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh",
+  // "postStartCommand": "sudo /usr/local/bin/init-firewall.sh",
   "postCreateCommand": "podman info --format '{{.Store.GraphDriverName}}' && test -w /dev/kvm && echo 'nested podman + KVM OK' && gh auth setup-git",
 
   "customizations": {

@@ -61,11 +61,11 @@ RUN printf '#!/bin/sh\nexec unshare -rn nft -c -f "$@"\n' > /usr/local/bin/nft-c
  && chmod 0755 /usr/local/bin/nft-check
 
 # Firewall script: root-owned, and the ONLY thing "podman" may run via sudo.
-COPY --chmod=0755 init-firewall.sh /usr/local/bin/init-firewall.sh
-RUN printf 'podman ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh\n' \
-      > /etc/sudoers.d/devfw \
-    && chmod 0440 /etc/sudoers.d/devfw \
-    && visudo -cf /etc/sudoers.d/devfw
+# COPY --chmod=0755 init-firewall.sh /usr/local/bin/init-firewall.sh
+# RUN printf 'podman ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh\n' \
+#       > /etc/sudoers.d/devfw \
+#     && chmod 0440 /etc/sudoers.d/devfw \
+#     && visudo -cf /etc/sudoers.d/devfw
 
 # Pre-create volume mount points so named volumes inherit the right owner.
 RUN install -d -o podman -g podman \
