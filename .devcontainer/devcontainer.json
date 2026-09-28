@@ -1,0 +1,101 @@
+// Devcontainer for developing the bootc VM image (Containerfile, configs, CI).
+// Host: Fedora + rootless Podman. VS Code: set "dev.containers.dockerPath": "podman".
+//
+// Containment rules:
+//   - No registry credentials, no cosign keys, no host podman socket in here.
+//   - Only a fine-grained GitHub token that can push branches and open PRs.
+//   - Default-deny egress firewall applied on every start (init-firewall.sh).
+{
+  "name": "bootc-image-dev",
+
+  // Containerfile is expected to be based on quay.io/podman/stable and to:
+  //   - install buildah, skopeo, hadolint, shellcheck, actionlint, nftables,
+  //     squid (for `squid -k parse`), qemu-kvm, iptables, ipset, git, gh
+  //   - install Claude Code (at build time, while the network is still open)
+  //   - copy init-firewall.sh to /usr/local/bin and add a sudoers rule that lets
+  //     the "podman" user run ONLY that script as root
+  "build": {
+    "dockerfile": "Containerfile",
+    "context": "."
+  },
+
+  "remoteUser": "podman",
+  "containerUser": "podman",
+  "updateRemoteUserUID": false,
+
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "workspaceFolder": "/workspace",
+
+  "runArgs": [
+    // Map your host UID to "podman" (UID 1000) so files in /workspace stay yours.
+    // "--userns=keep-id",
+
+    // Nested rootless podman: FUSE for overlay storage, TUN for pasta networking.
+    "--device=/dev/fuse",
+    "--device=/dev/net/tun",
+
+    // Boot test VMs with KVM (qemu inside the container).
+    "--device=/dev/kvm",
+
+    // SELinux on the Fedora host would block nested container mounts.
+    "--security-opt=label=disable",
+
+    // Needed only by init-firewall.sh (runs as root via the sudoers rule).
+    "--cap-add=NET_ADMIN",
+    "--cap-add=NET_RAW",
+
+    "--hostname=bootc-dev",
+      "--security-opt=seccomp=/usr/share/containers/seccomp.json"
+  ],
+
+  "mounts": [
+    // Nested image storage: base images + Android Studio layers get big.
+    "source=bootc-dev-containers,target=/home/podman/.local/share/containers,type=volume",
+    // Claude Code login and settings survive rebuilds.
+    "source=bootc-dev-claude,target=/home/podman/.claude,type=volume",
+    // Shell history.
+    "source=bootc-dev-history,target=/home/podman/.history,type=volume"
+  ],
+
+  "containerEnv": {
+    "HISTFILE": "/home/podman/.history/bash_history",
+    // Fine-grained PAT, this repo only: Contents RW + Pull requests RW.
+    // Deliberately WITHOUT the "Workflows" permission, so nothing pushed from
+    // here can change .github/workflows (and thus how images get published).
+    "GH_TOKEN": "${localEnv:BOOTC_DEV_GH_TOKEN}",
+
+    "HTTP_PROXY": "",
+    "HTTPS_PROXY": "",
+    "http_proxy": "",
+    "https_proxy": ""
+  },
+
+  "remoteEnv": {
+    // Don't let VS Code forward your SSH agent (it could push anywhere).
+    "SSH_AUTH_SOCK": ""
+  },
+
+  // Apply the default-deny firewall on every start, then sanity-check tooling.
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh",
+  "postCreateCommand": "podman info --format '{{.Store.GraphDriverName}}' && test -w /dev/kvm && echo 'nested podman + KVM OK' && gh auth setup-git",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "redhat.vscode-yaml",
+        "timonwong.shellcheck",
+        "exiasr.hadolint",
+        "github.vscode-github-actions"
+      ]
+    }
+  },
+
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "64gb"
+  },
+
+  "shutdownAction": "stopContainer"
+}

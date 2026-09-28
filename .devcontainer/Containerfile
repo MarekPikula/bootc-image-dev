@@ -1,0 +1,81 @@
+# Devcontainer image for developing the bootc VM image.
+# Base provides rootless podman configured for running inside a container
+# (user "podman", UID 1000, subuid/subgid ranges, fuse-overlayfs).
+# Tip: pin the base by digest once things work: quay.io/podman/stable@sha256:...
+ARG BASE_IMAGE=quay.io/podman/stable:latest
+FROM ${BASE_IMAGE}
+
+ARG HADOLINT_VERSION=2.14.0
+ARG ACTIONLINT_VERSION=1.7.7
+
+USER root
+
+# Build, validation and VM-testing tools.
+RUN set -eux; \
+    case "$(uname -m)" in \
+      x86_64)  firmware=edk2-ovmf ;; \
+      aarch64) firmware=edk2-aarch64 ;; \
+      *) echo "unsupported arch" >&2; exit 1 ;; \
+    esac; \
+    dnf -y install --setopt=install_weak_deps=False \
+      "$firmware" \
+      bind-utils \
+      buildah \
+      curl \
+      findutils \
+      gh \
+      git \
+      gzip \
+      jq \
+      less \
+      nftables \
+      procps-ng \
+      qemu-img \
+      qemu-kvm-core \
+      ShellCheck \
+      skopeo \
+      squid \
+      sudo \
+      tar \
+      which; \
+    dnf clean all
+
+# Linters not packaged in Fedora. Consider adding sha256 checks once pinned:
+#   echo "<sha256>  /usr/local/bin/hadolint" | sha256sum -c -
+RUN set -eux; \
+    case "$(uname -m)" in \
+      x86_64)  h=x86_64; a=amd64 ;; \
+      aarch64) h=arm64;  a=arm64 ;; \
+    esac; \
+    curl -fsSLo /usr/local/bin/hadolint \
+      "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${h}"; \
+    chmod 0755 /usr/local/bin/hadolint; \
+    curl -fsSL \
+      "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${a}.tar.gz" \
+      | tar -xz -C /usr/local/bin actionlint; \
+    hadolint --version; actionlint --version
+
+# `nft -c` needs CAP_NET_ADMIN; a throwaway user+net namespace provides it
+# without touching the container's real firewall.
+RUN printf '#!/bin/sh\nexec unshare -rn nft -c -f "$@"\n' > /usr/local/bin/nft-check \
+ && chmod 0755 /usr/local/bin/nft-check
+
+# Firewall script: root-owned, and the ONLY thing "podman" may run via sudo.
+COPY --chmod=0755 init-firewall.sh /usr/local/bin/init-firewall.sh
+RUN printf 'podman ALL=(root) NOPASSWD: /usr/local/bin/init-firewall.sh\n' \
+      > /etc/sudoers.d/devfw \
+    && chmod 0440 /etc/sudoers.d/devfw \
+    && visudo -cf /etc/sudoers.d/devfw
+
+# Pre-create volume mount points so named volumes inherit the right owner.
+RUN install -d -o podman -g podman \
+    /home/podman/.claude /home/podman/.history /home/podman/.local/bin
+
+USER podman
+ENV PATH=/home/podman/.local/bin:${PATH} \
+    DISABLE_AUTOUPDATER=1
+
+# Installed at build time while the network is open; update by rebuilding.
+RUN curl -fsSL https://claude.ai/install.sh | bash && claude --version
+
+WORKDIR /workspace
