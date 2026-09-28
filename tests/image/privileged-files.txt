@@ -1,0 +1,39 @@
+# setuid/setgid files and file capabilities in the image, reviewed as not
+# giving dev a way to root (su is wheel-only, pkexec/sudo are closed by
+# polkit/sudoers). tests/image/checks.sh fails on any difference, so a new
+# privileged binary from a package or base update gets reviewed first.
+# Format: "<octal mode> <path>" or "caps <path> <capabilities>".
+4755 /usr/bin/chage
+4711 /usr/bin/chfn
+4711 /usr/bin/chsh
+4755 /usr/bin/fusermount3
+4755 /usr/bin/gpasswd
+4755 /usr/bin/grub2-set-bootflag
+2711 /usr/bin/lockdev
+4755 /usr/bin/mount
+4755 /usr/bin/mount.nfs
+4755 /usr/bin/newgrp
+4755 /usr/bin/pam_timestamp_check
+4755 /usr/bin/passwd
+4755 /usr/bin/pkexec
+4755 /usr/bin/su
+4111 /usr/bin/sudo
+4755 /usr/bin/umount
+4755 /usr/bin/unix_chkpwd
+4711 /usr/bin/userhelper
+4755 /usr/bin/vmware-user-suid-wrapper
+4755 /usr/lib/polkit-1/polkit-agent-helper-1
+4750 /usr/libexec/dbus-1/dbus-daemon-launch-helper
+2711 /usr/libexec/utempter/utempter
+caps /usr/bin/arping cap_net_raw=p
+caps /usr/bin/clockdiff cap_net_raw=p
+caps /usr/bin/kwin_wayland cap_sys_nice=ep
+caps /usr/bin/mtr-packet cap_net_raw=ep
+caps /usr/bin/newgidmap cap_setgid=ep
+caps /usr/bin/newuidmap cap_setuid=ep
+caps /usr/libexec/gstreamer-1.0/gst-ptp-helper cap_net_bind_service,cap_net_admin,cap_sys_nice=ep
+caps /usr/libexec/ksysguard/ksgrd_network_helper cap_net_raw=ep
+caps /usr/libexec/ksystemstats_intel_helper cap_perfmon=ep
+caps /usr/libexec/sssd/krb5_child cap_dac_read_search,cap_setgid,cap_setuid=p
+caps /usr/libexec/sssd/ldap_child cap_dac_read_search=p
+caps /usr/libexec/sssd/sssd_pam cap_dac_read_search=p

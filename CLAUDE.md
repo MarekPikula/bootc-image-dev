@@ -10,7 +10,7 @@ questions. Read it before starting work, and update it when a decision changes.
 ## Non-negotiables
 
 - **Base image** is `quay.io/fedora/fedora-kinoite:44`, pinned by digest.
-  Aurora was rejected for its privilege-escalation paths; see PLAN.md.
+  Aurora was rejected for its privilege-escalation paths (see PLAN.md).
 - **Accounts:**
   - `admin` (UID 1000) is in `wheel` and used only for administration.
   - `dev` (UID 1500) is used for daily work by the human and by Claude Code.
@@ -22,10 +22,10 @@ questions. Read it before starting work, and update it when a decision changes.
     `/etc/passwd`.
 - **Credentials:** no passwords, keys, tokens or other credentials go in the
   image or the qcow2. Passwords are set at first boot by a one-shot tty1 prompt
-  that runs before SDDM.
+  that runs before the display manager.
 - **Network containment** (the core of the project):
   - An nftables rule (`meta skuid 1500`) lets `dev` connect only over loopback.
-    That rule is the enforcement; proxy environment variables are only for
+    That rule is the enforcement. Proxy environment variables are only for
     convenience.
   - Containment fails closed: if the rule doesn't load, users can't log in.
   - Squid on `127.0.0.1:3128`, using a `dstdomain -n` allowlist and CONNECT to
@@ -46,6 +46,9 @@ questions. Read it before starting work, and update it when a decision changes.
 
 - Third-party software goes under `/usr`, for example
   `/usr/lib/android-studio`. Never use `/opt` or `/usr/local`.
+- Our executables go in `/usr/libexec/android-dev-vm/`. SELinux labels that
+  `bin_t`, while scripts under `/usr/lib` get `lib_t` and run confined as
+  `init_t` when systemd starts them.
 - Keep our config image-owned in `/usr/lib/android-dev-vm/` and wire it in with
   drop-ins. Write to `/etc` only when a program insists, because `/etc` gets a
   3-way merge and local edits stop updates from applying.

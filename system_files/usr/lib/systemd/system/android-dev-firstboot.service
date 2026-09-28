@@ -1,0 +1,22 @@
+# Pulled in by a multi-user.target.wants symlink in /usr (build_files/
+# 40-services.sh), not by [Install]: the image owns the enablement, so neither
+# `systemctl disable` nor a preset reset can turn it off.
+[Unit]
+Description=Set the admin and dev passwords on first boot
+# systemd-firstboot asks for keymap and locale first, so passwords are typed
+# with the right layout.
+After=systemd-sysusers.service systemd-firstboot.service systemd-user-sessions.service plymouth-start.service
+Before=display-manager.service getty@tty1.service
+# Marked done only on success, so a failed run asks again next boot.
+ConditionPathExists=!/var/lib/android-dev-vm/firstboot.done
+
+[Service]
+Type=oneshot
+StateDirectory=android-dev-vm
+ExecStartPre=-/usr/bin/plymouth quit
+ExecStart=/usr/libexec/android-dev-vm/set-passwords
+StandardInput=tty
+StandardOutput=inherit
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes

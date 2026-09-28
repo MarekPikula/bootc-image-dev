@@ -1,0 +1,39 @@
+// dev does daily work and runs Claude Code, so it must never gain root (see
+// CLAUDE.md). Deny every polkit action dev asks for, except a few harmless
+// session actions. Denying (instead of asking for admin authentication) means
+// no password prompt ever appears in dev's session.
+//
+// polkit runs rules in file-name order across /etc and /usr/share, and the
+// first result wins. 00- keeps this ahead of every other rule, including
+// Kinoite's empower.rules, which grants everything to the "empower" group.
+polkit.addRule(function (action, subject) {
+    if (subject.user !== "dev") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    var allowed = [
+        // Shut down or restart the VM from the session. power-off and reboot
+        // also imply set-wall-message (policykit.imply), so it's listed too.
+        "org.freedesktop.login1.power-off",
+        "org.freedesktop.login1.reboot",
+        "org.freedesktop.login1.suspend",
+        "org.freedesktop.login1.set-wall-message",
+        // Real-time scheduling for PipeWire audio.
+        "org.freedesktop.RealtimeKit1.acquire-high-priority",
+        "org.freedesktop.RealtimeKit1.acquire-real-time",
+        // Mount removable media (not system disks).
+        "org.freedesktop.udisks2.filesystem-mount",
+        "org.freedesktop.udisks2.eject-media",
+    ];
+
+    var inAllowlist = allowed.indexOf(action.id) >= 0 ||
+        // Inhibitors let apps delay sleep or shutdown for this session.
+        action.id.indexOf("org.freedesktop.login1.inhibit-") === 0;
+
+    // Only dev's active local session, as upstream's allow_active. Background
+    // services and inactive sessions get NO, never an admin prompt.
+    if (inAllowlist && subject.local && subject.active) {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NO;
+});

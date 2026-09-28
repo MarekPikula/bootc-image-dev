@@ -26,6 +26,8 @@ LABEL org.opencontainers.image.title="android-dev-vm" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.version="${IMAGE_VERSION}"
 
+COPY system_files/ /
+
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build.sh
 

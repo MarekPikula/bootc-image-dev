@@ -12,8 +12,8 @@ constraints that don't change.
 |---|---|---|
 | Base image | `quay.io/fedora/fedora-kinoite:44`, pinned by digest in `versions.env` | A real bootc image (`containers.bootc=1`) with no third-party privilege helpers. [Why not Aurora](#why-not-aurora) |
 | Repo visibility | Public | Branch-restricted Environments and required checks work on the free plan, VMs pull from GHCR without credentials, and Actions minutes and storage for multi-GB qcow2 artifacts are free. |
-| Accounts | `admin` = UID 1000 (`wheel`), `dev` = UID 1500 (`kvm`, not `wheel`), via sysusers.d | This is the approach bootc recommends. Fixed UIDs keep the nftables rule stable. |
-| Passwords | One-shot tty1 prompt at first boot, before SDDM | Nothing is baked in, there's no window where accounts have no password, and it works in the Boxes console. |
+| Accounts | `admin` = UID 1000 (`wheel`), `dev` = UID 1500 (no extra groups), via sysusers.d | This is the approach bootc recommends. Fixed UIDs keep the nftables rule stable. |
+| Passwords | One-shot tty1 prompt at first boot, before the display manager (Plasma Login Manager on Kinoite 44) | Nothing is baked in, there's no window where accounts have no password, and it works in the Boxes console. |
 | polkit | Deny-by-default rule for `dev`, with a short allowlist | Removes every admin prompt from dev's session, so Claude Code can't trigger a password dialog that the human might fill in. |
 | Claude Code | RPM from Anthropic's signed dnf repo, installed under `/usr` | Updates arrive with the image, and `dev` can't replace the binary. It needs no extra runtime hosts. |
 | Signing | **Deferred** | Keyless identity pinning isn't possible in `policy.json` yet. [Details](#signing-future-pr) |
@@ -28,6 +28,7 @@ versions.env               pinned: base image digest, Android Studio version + s
 build_files/
   build.sh                 runs the numbered steps in order
   10-packages.sh           JDK 21, git, unzip, squid, bubblewrap, socat, ...
+  15-su.sh                 su for wheel only (pam_wheel requisite)
   20-android-studio.sh     download, sha256 check, unpack to /usr/lib/android-studio
   30-claude-code.sh        dnf repo, GPG fingerprint check, install
   40-services.sh           enable/disable/mask units
@@ -38,13 +39,16 @@ system_files/              overlay copied to / (paths below are relative to /)
     nftables/dev-egress.nft
     squid/squid.conf
     squid/allowlist.txt
-    firstboot/set-passwords.sh
+  usr/libexec/android-dev-vm/
+    set-passwords          first-boot prompt (bin_t, so it may run passwd)
   usr/lib/systemd/system/
     dev-egress-firewall.service
     systemd-user-sessions.service.d/10-dev-egress.conf
     squid.service.d/10-android-dev-vm.conf
     bootc-fetch-apply-updates.service.d/10-stage-only.conf
     android-dev-firstboot.service
+    multi-user.target.wants/android-dev-firstboot.service   image-owned enablement
+    systemd-sysusers.service.d/50-android-dev-vm.conf       imports admin/dev password credentials
   usr/lib/systemd/user-environment-generators/60-dev-proxy
   usr/share/polkit-1/rules.d/00-android-dev.rules
   usr/share/applications/android-studio.desktop
@@ -53,9 +57,13 @@ system_files/              overlay copied to / (paths below are relative to /)
   etc/profile.d/dev-proxy.sh
   etc/xdg/kioslaverc
   etc/claude-code/managed-settings.json
+  etc/security/pwquality.conf.d/50-android-dev-vm.conf    enforce_for_root
 .pre-commit-config.yaml    hadolint, shellcheck, actionlint, nft-check, squid -k parse, file hygiene
 tests/image/checks.sh      assertions run inside the built image with podman (no VM)
-tests/vm/run-vm.sh         boots a qcow2 with qemu/KVM; per-run SSH key via SMBIOS credentials
+tests/image/polkit.sh      runs polkitd in the image and checks dev against every registered action
+tests/image/firstboot.sh   drives the first-boot prompt with typed input in a throwaway container
+tests/image/privileged-files.txt   reviewed setuid/setgid files and file capabilities
+tests/vm/run-vm.sh         boots a qcow2 with qemu/KVM, per-run SSH key via SMBIOS credentials
 tests/vm/checks.sh         in-guest assertions, run as root and as dev
 .github/workflows/
   _build-test.yml          reusable: lint, build, image checks, qcow2, VM test
@@ -119,27 +127,75 @@ README.md                  for the people running the VM
 
 ### Privilege
 
-- **Sudo.** `dev` isn't in `wheel`, and the image checks assert that no
-  sudoers entry names `dev` or `ALL` users.
-- **polkit.** `00-android-dev.rules` returns `polkit.Result.NO` for any action
-  requested by UID 1500, except a small allowlist:
-  - `org.freedesktop.login1` power-off and reboot
-  - `udisks2` removable-media mount
-  - rtkit
-  - colord
-- **What that rule shuts off.** It covers the Kinoite defaults that grant
-  active sessions root-side actions without authentication:
-  - NetworkManager `settings.modify.own` and `network-control`
-  - flatpak system updates
-  - udisks loop-setup
-  - pkexec
-  - run0
+- **Accounts.** sysusers.d creates `admin` (1000, `wheel`) and `dev` (1500, no
+  extra groups), both locked.
+  - Homes (`/var/home/<user>`, from `/etc/skel`) are created by the first-boot
+    unit with `mkhomedir_helper`.
+- **First boot.** `android-dev-firstboot.service` runs on tty1 before the
+  display manager and asks for both passwords.
+  - Each password is typed twice, and dev's must differ from admin's. It's set
+    with `passwd --stdin`, so pwquality still applies, and `enforce_for_root`
+    makes it reject weak passwords instead of only warning.
+  - `passwd --stdin` exits 0 even when PAM rejects the password
+    (shadow-utils 4.19), so the script checks shadow for a hash instead.
+  - After 5 failed attempts per account it gives up. It ignores Ctrl+C, logs
+    failures to the journal, and marks itself done only on success, so the
+    next boot asks again. Until then the login screen appears, but nobody can
+    log in.
+  - `systemd-mute-console` keeps kernel and systemd status messages off the
+    prompt while it runs.
+  - The script lives in `/usr/libexec` so SELinux labels it `bin_t` and it may
+    run `passwd`. Under `/usr/lib` it would be `lib_t`, run as `init_t`, and
+    fail. The homes it creates with `mkhomedir_helper` get `restorecon`.
+  - The unit is pulled in by a `multi-user.target.wants` symlink in `/usr`, so
+    neither `systemctl disable` nor a preset reset turns it off.
+  - A password that's already set is skipped. Fedora's `systemd-sysusers`
+    imports password credentials for root only, so a drop-in adds
+    `passwd.hashed-password.<user>` and `passwd.plaintext-password.<user>` for
+    admin and dev. That makes a headless boot possible.
+  - `tests/image/firstboot.sh` drives the prompt with typed input in a
+    throwaway container, including the rejection paths and the give-up path.
+- **KDE's own first-boot flow is off.** Kinoite's `plasma-setup.service`
+  (autologin plus a wizard that creates an admin user) is masked.
+  `systemd-firstboot` still asks for locale, keymap and timezone, so the
+  passwords are typed with the right layout. It skips its root-password
+  prompt because root already has a locked shadow entry (`*`), which the image
+  checks assert. Root stays locked.
+- **Sudo.** `dev` isn't in `wheel`. The image checks assert that
+  `sudo -l -U dev` grants nothing.
+- **su.** `pam_wheel.so use_uid` is `requisite` in `/etc/pam.d/su`, so non-wheel
+  users are refused before any password prompt.
+- **polkit.** `00-android-dev.rules` returns `NO` for every action dev asks for,
+  except these, and only from dev's active local session (as upstream's
+  `allow_active`, but `NO` instead of an admin prompt everywhere else):
+  - login1 power-off, reboot, suspend and set-wall-message (implied by
+    power-off and reboot)
+  - login1 inhibitors
+  - RealtimeKit (audio)
+  - udisks2 removable-media mount and eject
+
+  It sorts first, ahead of Kinoite's `empower.rules`, which grants everything
+  to the `empower` group. `tests/image/polkit.sh` runs polkitd in the image and
+  checks dev against every registered action. Its subjects have no login
+  session, like a background service, so every answer must be `NO`. The
+  allowlist's `YES` needs a real desktop session and is a manual check.
+  Without the rule,
+  dev would get silent `YES` for systemd's mount and namespace helpers, and
+  admin prompts (`CHALLENGE`) for rpm-ostree, firewalld and more.
 - **Root-side services dev could drive.** avahi, cups/cups-browsed and geoclue
-  are masked. PackageKit/Discover and the flatpak system helper are covered by
-  the polkit rule. Remaining channels are listed in
-  [Open questions](#open-questions).
-- **Emulator access.** `dev` is in `kvm` so the Android emulator can use
-  `/dev/kvm`. That grants no root.
+  are masked. NetworkManager, the flatpak system helper and rpm-ostree are
+  covered by the polkit rule. `userhelper` (usermode) asks for root's
+  password for its console apps (`vpnc`, `config-util`), and root is locked.
+  Remaining channels are listed in [Open questions](#open-questions).
+- **Privileged files.** `tests/image/privileged-files.txt` lists the reviewed
+  setuid/setgid files and file capabilities, and the image checks fail on any
+  difference. Several have `cap_net_raw` or `cap_net_admin` (`arping`,
+  `mtr-packet`, `gst-ptp-helper`). Their sockets are still owned by dev, and
+  the VM test covers raw and ICMP traffic.
+- **Emulator access.** Fedora's udev rules make `/dev/kvm` mode 0666, so `dev`
+  needs no `kvm` membership (the image checks assert the rule). Membership
+  would also be a trap: Kinoite keeps `kvm` only in `/usr/lib/group`
+  (nss-altfiles), where sysusers' `m dev kvm` silently does nothing.
 
 ### Updates
 
@@ -187,7 +243,7 @@ separate so you can commit them on their own and push them from the host.
    - `Containerfile`, `versions.env`, `.pre-commit-config.yaml`,
      `bootc container lint`.
    - ⚙ `pr.yml`: lint, build (no push), bootc lint.
-2. **Accounts and privilege.** sysusers.d/tmpfiles.d, first-boot password
+2. **Accounts and privilege.** sysusers.d, first-boot password
    unit, polkit rule, sudoers assertions, masked services.
 3. **Network containment.** nftables table plus the fail-closed unit, Squid
    config, allowlist, log access and helper, proxy environment for `dev`,
@@ -200,6 +256,9 @@ separate so you can commit them on their own and push them from the host.
    - You then make `vm-test` a required check in a branch ruleset.
 5. **Android tooling.** Android Studio (sha256-verified, desktop entry, proxy
    seeding, platform updater disabled), JDK 21, build tools.
+   Also remove `vpnc` and `open-vm-tools-desktop`: nothing needs them in a
+   QEMU VM, and they bring the setuid `userhelper` and
+   `vmware-user-suid-wrapper`.
 6. **Claude Code.** dnf repo with a GPG fingerprint check, managed settings,
    bubblewrap and socat for its optional sandbox.
 7. **Updates and publishing.**
@@ -221,9 +280,9 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, `nft-check`, `squid -k parse`, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. `nft-check` and `squid -k parse` also run inside the built image, so they match its package versions. |
-| Image | `podman run` against the built image | sysusers entries present; no password hashes or `authorized_keys` in shipped `/etc`; no sudoers grant to `dev`; polkit rules parse; `desktop-file-validate`; Android Studio present; `claude --version`; no `--apply` in the update unit; expected units masked. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, and `su` is wheel-only. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Later: `desktop-file-validate`, Android Studio present, `claude --version`, no `--apply` in the update unit. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
-| Manual | documented in README | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes. |
+| Manual | documented in README | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
 VM test assertions:
 
@@ -241,6 +300,7 @@ VM test assertions:
   - `pkcheck` reports "not authorized" for systemd manage-units,
     NetworkManager settings and flatpak install.
   - `id` doesn't show `wheel`.
+  - dev can open `/dev/kvm` (the emulator needs it without `kvm` membership).
 - **Updates.** The stage-only drop-in is in effect.
 
 The test harness reaches the guest over SSH without shipping any test users or
@@ -248,8 +308,16 @@ keys in the image:
 
 - `run-vm.sh` generates a key for each run.
 - It passes `ssh.authorized_keys.root` and `ssh.listen` as SMBIOS type-11 system
-  credentials; systemd-ssh-generator (systemd ≥ 256) picks those up.
+  credentials, which systemd-ssh-generator (systemd ≥ 256) picks up.
 - The connection goes through a qemu user-net port forward.
+- First-boot prompts are skipped with credentials too: `firstboot.locale`,
+  `firstboot.keymap` and `firstboot.timezone` for systemd-firstboot, and
+  `passwd.hashed-password.admin` / `.dev` (per-run throwaway values) for the
+  password prompt. The test asserts that `android-dev-firstboot.service`
+  succeeded and that both homes exist.
+- It also asserts that `systemd-sysusers.service` created the accounts on
+  first boot. Its `ConditionNeedsUpdate=/etc` may skip it on later updates,
+  which matters only when a future image adds accounts.
 
 ## Open questions
 
@@ -307,7 +375,7 @@ starting from plain Kinoite.
 
 - **Keyless doesn't fit.** containers/image's `sigstoreSigned.fulcio` matches
   only `oidcIssuer` and `subjectEmail`, so it can't pin a GitHub workflow URI.
-  containers/image#2235 was closed unmerged; container-libs#625
+  containers/image#2235 was closed unmerged, and container-libs#625
   (`buildSignerURI`) is still open.
 - **Realistic design: key-based cosign.** This is also what Universal Blue
   does.
@@ -333,7 +401,7 @@ starting from plain Kinoite.
 - bootc: <https://bootc.dev/bootc/> (users and groups, filesystem, upgrades,
   `bootc container lint`, `bootc rollback`)
 - bootc-image-builder: <https://github.com/osbuild/bootc-image-builder>
-  (archived); <https://github.com/osbuild/image-builder>
+  (archived), <https://github.com/osbuild/image-builder>
 - containers-policy.json(5):
   <https://github.com/containers/image/blob/main/docs/containers-policy.json.5.md>
 - cosign bundle-format issue: <https://github.com/projectbluefin/common/issues/977>

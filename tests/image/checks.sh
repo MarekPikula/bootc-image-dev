@@ -28,16 +28,61 @@ expect_meta() {
   [[ $actual == "$3" ]] || { echo "      $2 is '$actual', expected '$3'"; return 1; }
 }
 
-# One offline container serves every in-image check.
+# One offline container serves every in-image check. systemd-sysusers creates
+# the accounts first, as it does at boot.
 ctr="$(podman run -d --rm --network=none "$image" sleep infinity)"
 trap 'podman rm -f -t 0 "$ctr" >/dev/null || true' EXIT
+# Captured before sysusers runs: the image itself must not carry the accounts.
+shipped_accounts="$(podman exec "$ctr" grep -hE '^(admin|dev):' \
+  /etc/passwd /etc/shadow /etc/group /usr/lib/passwd /usr/lib/group || true)"
+out="$(podman exec "$ctr" systemd-sysusers 2>&1)" || { echo "$out" >&2; exit 1; }
 
 # Runs the bash script on stdin inside the image.
 in_image() {
   podman exec -i "$ctr" /usr/bin/bash -euo pipefail -s
 }
 
-# versions.env pins repo:tag@digest; buildah records what FROM actually used
+indent() {
+  sed 's/^/      /'
+}
+
+# /sysroot is skipped: it holds the ostree repo's copies of the same files.
+privileged_files() {
+  in_image <<'EOF'
+export LC_ALL=C
+find / -xdev -path /sysroot -prune -o -type f -perm /6000 -printf '%m %p\n' | sort -k2
+getcap -r /usr /etc 2>/dev/null | sed 's/^/caps /' | sort -k2
+EOF
+}
+
+# pipefail: the pipeline fails with diff's status.
+expect_privileged_files() {
+  diff <(grep -v '^#' tests/image/privileged-files.txt) <(privileged_files) | indent
+}
+
+no_shipped_accounts() {
+  [[ -z $shipped_accounts ]] || { indent <<<"$shipped_accounts"; return 1; }
+}
+
+# The prompt sets passwords, so it runs in a throwaway container, not the
+# shared one. $1 is the tests/image/firstboot.sh mode, $2 the typed input.
+firstboot_prompt() {
+  podman run --rm -i --network=none -v "$PWD/tests/image:/tests:ro,z" "$image" \
+    /tests/firstboot.sh "$1" <<<"$2"
+}
+
+# A weak password, a mismatch and dev reusing admin's are rejected first.
+expect_firstboot_sets_passwords() {
+  local a=Lantern-Quiver-4817-Mosaic b=Harbor-Violet-2093-Kestrel
+  firstboot_prompt sets "$(printf '%s\n' password password "$a" "$a" \
+    "$a" "$a" "$b" "${b}x" "$b" "$b")"
+}
+
+expect_firstboot_gives_up() {
+  firstboot_prompt gives-up "$(printf '\n%.0s' {1..12})"
+}
+
+# versions.env pins repo:tag@digest, and buildah records what FROM actually used
 # as repo@digest.
 pinned_base="$(sed -n 's/^BASE_IMAGE=//p' versions.env)"
 pinned_repo="${pinned_base%%@*}"
@@ -69,6 +114,84 @@ found="$(find / -xdev \( -name authorized_keys -o -name authorized_keys2 \) -pri
 EOF
 check "no SSH host keys" in_image <<'EOF'
 ! compgen -G '/etc/ssh/ssh_host_*_key' >/dev/null
+EOF
+check "admin and dev come from sysusers.d at boot, not from the image's files" \
+  no_shipped_accounts
+
+# Accounts and privilege (CLAUDE.md: dev must never gain root).
+check "admin is UID 1000 and in wheel" in_image <<'EOF'
+[[ "$(id -u admin)" == 1000 ]] && id -nG admin | grep -qw wheel
+EOF
+check "dev is UID 1500 and in no group but its own" in_image <<'EOF'
+[[ "$(id -u dev)" == 1500 && "$(id -nG dev)" == dev ]] ||
+  { echo "      dev: UID $(id -u dev), groups: $(id -nG dev)"; exit 1; }
+EOF
+# The Android emulator relies on this instead of kvm group membership.
+check "/dev/kvm is world-accessible (udev MODE=0666)" in_image <<'EOF'
+grep -qE '^KERNEL=="kvm",.*MODE="0666"' /usr/lib/udev/rules.d/50-udev-default.rules
+EOF
+check "sudo: no rule for dev" in_image <<'EOF'
+sudo -l -U dev 2>&1 | grep -q 'is not allowed to run sudo'
+EOF
+# Refused outright: "Password:" in the output would mean dev got to try one.
+# Control: admin (wheel) still gets the prompt, so su isn't just broken.
+check "su: dev is refused before any password prompt, admin isn't" in_image <<'EOF'
+su_as() {
+  setpriv --reuid="$1" --regid="$1" --init-groups su -c true "$2" </dev/null 2>&1 || true
+}
+bad=0
+for target in root admin; do
+  out="$(su_as dev "$target")"
+  [[ $out == "su: Permission denied" ]] || { echo "      su $target as dev: $out"; bad=1; }
+done
+out="$(su_as admin root)"
+[[ $out == Password:* ]] || { echo "      su root as admin: $out"; bad=1; }
+exit "$bad"
+EOF
+check "polkit: 00-android-dev.rules runs before every other rule" in_image <<'EOF'
+first="$(find /etc/polkit-1/rules.d /usr/share/polkit-1/rules.d -name '*.rules' -printf '%f\n' |
+  LC_ALL=C sort | head -n1)"
+[[ $first == 00-android-dev.rules ]] || { echo "      first rules file: $first"; exit 1; }
+EOF
+check "polkit: dev outside a desktop session gets NO for every action" \
+  in_image <tests/image/polkit.sh
+check "setuid/setgid files and capabilities match tests/image/privileged-files.txt" \
+  expect_privileged_files
+
+# Units.
+check "first-boot password unit is pulled in from /usr" in_image <<'EOF'
+link=/usr/lib/systemd/system/multi-user.target.wants/android-dev-firstboot.service
+[[ "$(readlink "$link")" == ../android-dev-firstboot.service ]]
+EOF
+# Under /usr/lib it would be lib_t and run as init_t, which may not run passwd.
+check "first-boot script is labelled bin_t (SELinux)" in_image <<'EOF'
+label="$(matchpathcon -n /usr/libexec/android-dev-vm/set-passwords)"
+[[ $label == *:bin_t:* ]] || { echo "      label: $label"; exit 1; }
+EOF
+check "first-boot prompt rejects bad input, then sets both passwords" \
+  expect_firstboot_sets_passwords
+check "first-boot prompt gives up after repeated failures, unmarked" \
+  expect_firstboot_gives_up
+check "sysusers imports the admin and dev password credentials" in_image <<'EOF'
+config="$(systemctl cat systemd-sysusers.service)"
+for user in admin dev; do
+  grep -qx "ImportCredential=passwd.hashed-password.$user" <<<"$config"
+done
+EOF
+# systemd-firstboot skips its root-password prompt when root already has a
+# shadow entry, and a locked one keeps root unusable.
+check "root is locked" in_image <<'EOF'
+field="$(getent shadow root | cut -d: -f2)"
+[[ $field =~ ^[!*]+$ ]] || { echo "      root's shadow field: '$field'"; exit 1; }
+EOF
+check "plasma-setup, avahi, cups and geoclue are masked" in_image <<'EOF'
+bad=0
+for unit in plasma-setup.service avahi-daemon.service avahi-daemon.socket \
+  cups.service cups.socket cups.path cups-browsed.service geoclue.service; do
+  state="$(systemctl is-enabled "$unit" 2>&1 || true)"
+  [[ $state == masked ]] || { echo "      $unit: $state"; bad=1; }
+done
+exit "$bad"
 EOF
 
 if ((${#failed[@]})); then
