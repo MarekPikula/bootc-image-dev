@@ -23,11 +23,13 @@ RUN set -eux; \
       buildah \
       curl \
       findutils \
+      fish \
       gh \
       git \
       gzip \
       jq \
       less \
+      nano \
       nftables \
       procps-ng \
       qemu-img \
