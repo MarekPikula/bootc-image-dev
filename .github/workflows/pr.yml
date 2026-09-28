@@ -1,0 +1,73 @@
+name: PR
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    # Fedora like the devcontainer, so ShellCheck versions match. Both are on
+    # Fedora 44 today, but the devcontainer base (podman/stable) isn't pinned.
+    container: quay.io/fedora/fedora:44
+    env:
+      # Keep in sync with .devcontainer/Containerfile.
+      HADOLINT_VERSION: 2.14.0
+      HADOLINT_SHA256: 6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47
+      ACTIONLINT_VERSION: 1.7.7
+      ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+    steps:
+      - name: Install linters
+        run: |
+          dnf -y install --setopt=install_weak_deps=False git-core ShellCheck tar gzip
+          curl -fsSLo /usr/local/bin/hadolint \
+            "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          echo "${HADOLINT_SHA256}  /usr/local/bin/hadolint" | sha256sum -c -
+          chmod 0755 /usr/local/bin/hadolint
+          curl -fsSLo /tmp/actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  /tmp/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Lint
+        run: |
+          # The job container runs as root; the checkout is owned by the runner user.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          scripts/lint.sh
+
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The base image is several GB unpacked; the runner's root disk is small.
+      # /mnt is printed to decide whether podman storage can move there instead.
+      - name: Free disk space
+        run: |
+          df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force >/dev/null
+          df -h /
+
+      # Rootful, because bootc-image-builder (added later) reads rootful storage.
+      - name: Build image
+        run: |
+          sudo podman build --build-arg-file versions.env \
+            -t localhost/android-dev-vm:ci .
+
+      - name: Image checks
+        run: sudo tests/image/checks.sh localhost/android-dev-vm:ci
