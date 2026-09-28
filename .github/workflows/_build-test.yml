@@ -1,0 +1,116 @@
+name: Build and test
+
+# Reusable: pr.yml calls it now, publish.yml will too. Builds the image, checks
+# it, turns it into a qcow2 and boots that in a VM.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: localhost/android-dev-vm:ci
+  # The qcow2's system tracks the name it was built from, so build it from the
+  # registry name VMs update from. Keep in sync with tests/vm/checks.sh.
+  REGISTRY_IMAGE: ghcr.io/marekpikula/bootc-image-dev:stable
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    # Fedora like the devcontainer, so ShellCheck versions match. Both are on
+    # Fedora 44 today, but the devcontainer base (podman/stable) isn't pinned.
+    container: quay.io/fedora/fedora:44
+    env:
+      # Keep in sync with .devcontainer/Containerfile.
+      HADOLINT_VERSION: 2.14.0
+      HADOLINT_SHA256: 6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47
+      ACTIONLINT_VERSION: 1.7.7
+      ACTIONLINT_SHA256: 023070a287cd8cccd71515fedc843f1985bf96c436b7effaecce67290e7e0757
+    steps:
+      - name: Install linters
+        run: |
+          dnf -y install --setopt=install_weak_deps=False git-core pre-commit ShellCheck tar gzip
+          curl -fsSLo /usr/local/bin/hadolint \
+            "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
+          echo "${HADOLINT_SHA256}  /usr/local/bin/hadolint" | sha256sum -c -
+          chmod 0755 /usr/local/bin/hadolint
+          curl -fsSLo /tmp/actionlint.tar.gz \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  /tmp/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/actionlint.tar.gz -C /usr/local/bin actionlint
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Lint
+        run: |
+          # The job container runs as root, but the checkout is owned by the runner user.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          pre-commit run --all-files --show-diff-on-failure
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install qemu-img
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-utils
+
+      # Rootful: bootc-image-builder reads rootful storage.
+      - name: Build image
+        run: sudo podman build --build-arg-file versions.env -t "$IMAGE" .
+
+      - name: Image checks
+        run: sudo tests/image/checks.sh "$IMAGE"
+
+      - name: Build qcow2
+        run: |
+          sudo podman tag "$IMAGE" "$REGISTRY_IMAGE"
+          sudo disk/build-qcow2.sh "$REGISTRY_IMAGE" android-dev-vm.qcow2
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-dev-vm-qcow2
+          path: android-dev-vm.qcow2
+          # Already zstd-compressed.
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
+
+  vm-test:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: android-dev-vm-qcow2
+
+      - name: Install qemu and enable KVM
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils ovmf
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Boot and check
+        run: tests/vm/run-vm.sh android-dev-vm.qcow2 vm-logs
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: vm-logs
+          path: vm-logs
+          retention-days: 14
