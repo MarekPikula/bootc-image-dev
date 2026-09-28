@@ -54,7 +54,9 @@
     // Claude Code login and settings survive rebuilds.
     "source=bootc-dev-claude,target=/home/podman/.claude,type=volume",
     // Shell history.
-    "source=bootc-dev-history,target=/home/podman/.history,type=volume"
+    "source=bootc-dev-history,target=/home/podman/.history,type=volume",
+    // pre-commit hook environments survive rebuilds.
+    "source=bootc-dev-pre-commit,target=/home/podman/.cache/pre-commit,type=volume"
   ],
 
   "containerEnv": {

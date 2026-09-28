@@ -17,6 +17,7 @@ constraints that don't change.
 | polkit | Deny-by-default rule for `dev`, with a short allowlist | Removes every admin prompt from dev's session, so Claude Code can't trigger a password dialog that the human might fill in. |
 | Claude Code | RPM from Anthropic's signed dnf repo, installed under `/usr` | Updates arrive with the image, and `dev` can't replace the binary. It needs no extra runtime hosts. |
 | Signing | **Deferred** | Keyless identity pinning isn't possible in `policy.json` yet. [Details](#signing-future-pr) |
+| Linting | pre-commit: the linters as local hooks that run the sha256-pinned binaries, plus `pre-commit/pre-commit-hooks` pinned by commit | One config for the devcontainer, CI and an optional git hook. pre-commit can't hash-pin PyPI packages, so the hooks' `ruamel.yaml` dependency is pinned by version only. That gap is limited to lint tooling and never reaches the image. |
 | DNS exfiltration | Documented in v1, hardened later | [Open questions](#open-questions) |
 
 ## Repository layout
@@ -52,7 +53,7 @@ system_files/              overlay copied to / (paths below are relative to /)
   etc/profile.d/dev-proxy.sh
   etc/xdg/kioslaverc
   etc/claude-code/managed-settings.json
-scripts/lint.sh            hadolint, shellcheck, actionlint, nft-check, squid -k parse
+.pre-commit-config.yaml    hadolint, shellcheck, actionlint, nft-check, squid -k parse, file hygiene
 tests/image/checks.sh      assertions run inside the built image with podman (no VM)
 tests/vm/run-vm.sh         boots a qcow2 with qemu/KVM; per-run SSH key via SMBIOS credentials
 tests/vm/checks.sh         in-guest assertions, run as root and as dev
@@ -156,8 +157,9 @@ README.md                  for the people running the VM
 
 ### CI
 
-- **`pr.yml`** runs lint, builds without pushing, runs `bootc container lint`
-  and the image checks, builds the qcow2, and runs the VM test.
+- **`pr.yml`** runs pre-commit, builds without pushing, runs
+  `bootc container lint` and the image checks, builds the qcow2, and runs the
+  VM test.
 - **`publish.yml`** (push to `main`, weekly, dispatch):
   - Runs the same build and test, then exports an oci-archive.
   - A `publish` job bound to the `release` Environment (deployment branches:
@@ -182,13 +184,15 @@ review, commit and sign them. ⚙ marks workflow changes, which Claude keeps
 separate so you can commit them on their own and push them from the host.
 
 1. **Skeleton.**
-   - `Containerfile`, `versions.env`, `scripts/lint.sh`, `bootc container lint`.
+   - `Containerfile`, `versions.env`, `.pre-commit-config.yaml`,
+     `bootc container lint`.
    - ⚙ `pr.yml`: lint, build (no push), bootc lint.
 2. **Accounts and privilege.** sysusers.d/tmpfiles.d, first-boot password
    unit, polkit rule, sudoers assertions, masked services.
 3. **Network containment.** nftables table plus the fail-closed unit, Squid
    config, allowlist, log access and helper, proxy environment for `dev`,
-   `docs/security-model.md`.
+   `docs/security-model.md`, and `nft-check` and `squid -k parse` pre-commit
+   hooks.
 4. **VM test harness.**
    - `tests/vm/*`.
    - ⚙ `_build-test.yml` with the qcow2 build, the `vm-test` job and the
@@ -216,7 +220,7 @@ separate so you can commit them on their own and push them from the host.
 
 | Layer | Where | What |
 |---|---|---|
-| Static | devcontainer and CI | hadolint, shellcheck, actionlint, `nft-check`, `squid -k parse`. The last two also run inside the built image, so they match its package versions. |
+| Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, `nft-check`, `squid -k parse`, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. `nft-check` and `squid -k parse` also run inside the built image, so they match its package versions. |
 | Image | `podman run` against the built image | sysusers entries present; no password hashes or `authorized_keys` in shipped `/etc`; no sudoers grant to `dev`; polkit rules parse; `desktop-file-validate`; Android Studio present; `claude --version`; no `--apply` in the update unit; expected units masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | documented in README | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes. |

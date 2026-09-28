@@ -57,8 +57,8 @@ questions. Read it before starting work, and update it when a decision changes.
 ## This environment
 
 - A devcontainer with nested rootless podman, buildah, skopeo, qemu with KVM,
-  hadolint, shellcheck, actionlint, `nft-check <file>`, `squid -k parse`, `gh`
-  and git.
+  pre-commit, hadolint, shellcheck, actionlint, `nft-check <file>`,
+  `squid -k parse`, `gh` and git.
 - Outbound network is meant to be allowlisted. If something is blocked, report
   the domain and why it's needed. Never work around the firewall.
 - `.devcontainer/` is read-only. Suggest changes and the user applies them from
@@ -76,8 +76,9 @@ questions. Read it before starting work, and update it when a decision changes.
 
 ## Before handing changes over for review
 
-1. Run `scripts/lint.sh` (hadolint, shellcheck, actionlint, nft-check,
-   `squid -k parse`).
+1. Run pre-commit on tracked and untracked files with the command at the top
+   of `.pre-commit-config.yaml`. `--all-files` skips untracked files, and
+   don't `git add` files just to get them checked.
 2. Build the image locally with `podman build`, then run
    `tests/image/checks.sh` against it.
 3. Run `/simplify`, then `/code-review low`, on the uncommitted changes.

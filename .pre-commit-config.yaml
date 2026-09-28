@@ -1,0 +1,58 @@
+# Static checks for the image sources. Runs in the devcontainer and in CI.
+#
+# pre-commit only sees files git tracks. To also check new files that aren't
+# committed yet (changes stay uncommitted until they're reviewed):
+#   git ls-files -z -co --exclude-standard | xargs -0 pre-commit run --files
+# CI runs `pre-commit run --all-files` on the checkout.
+#
+# .devcontainer/ is skipped: it's maintained from the host, not part of the
+# image.
+minimum_pre_commit_version: 4.4.0
+exclude: ^\.devcontainer/
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c # frozen: v6.0.0
+    # pre-commit can't hash-pin PyPI packages. Pin the one dependency by
+    # version on every hook: a hook without it gets its own, unpinned env.
+    hooks:
+      - id: trailing-whitespace
+        additional_dependencies: &deps [ruamel.yaml==0.19.1]
+      - id: end-of-file-fixer
+        additional_dependencies: *deps
+      - id: mixed-line-ending
+        additional_dependencies: *deps
+      - id: check-yaml
+        additional_dependencies: *deps
+      - id: check-json
+        additional_dependencies: *deps
+      - id: check-merge-conflict
+        additional_dependencies: *deps
+      - id: check-added-large-files
+        additional_dependencies: *deps
+      - id: check-executables-have-shebangs
+        additional_dependencies: *deps
+      - id: check-shebang-scripts-are-executable
+        additional_dependencies: *deps
+      - id: detect-private-key
+        additional_dependencies: *deps
+
+  # The linters themselves: the version- and sha256-pinned binaries installed
+  # in the devcontainer and in CI.
+  - repo: local
+    hooks:
+      - id: hadolint
+        name: hadolint
+        entry: hadolint
+        language: unsupported
+        files: (^|/)Containerfile$
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck --external-sources
+        language: unsupported
+        types: [shell]
+      - id: actionlint
+        name: actionlint
+        entry: actionlint
+        language: unsupported
+        files: ^\.github/workflows/.*\.ya?ml$

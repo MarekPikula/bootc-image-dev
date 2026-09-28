@@ -26,7 +26,7 @@ jobs:
     steps:
       - name: Install linters
         run: |
-          dnf -y install --setopt=install_weak_deps=False git-core ShellCheck tar gzip
+          dnf -y install --setopt=install_weak_deps=False git-core pre-commit ShellCheck tar gzip
           curl -fsSLo /usr/local/bin/hadolint \
             "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-linux-x86_64"
           echo "${HADOLINT_SHA256}  /usr/local/bin/hadolint" | sha256sum -c -
@@ -44,7 +44,7 @@ jobs:
         run: |
           # The job container runs as root; the checkout is owned by the runner user.
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          scripts/lint.sh
+          pre-commit run --all-files --show-diff-on-failure
 
   build:
     runs-on: ubuntu-24.04

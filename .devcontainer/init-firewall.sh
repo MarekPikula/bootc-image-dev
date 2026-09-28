@@ -44,6 +44,10 @@ ALLOWED_DOMAINS=(
   release-assets.githubusercontent.com
   raw.githubusercontent.com
 
+  # pre-commit hook environments (pre-commit-hooks' PyPI dependency)
+  pypi.org
+  files.pythonhosted.org
+
   # Fedora packages for nested image builds
   mirrors.fedoraproject.org
   "$FEDORA_MIRROR"
