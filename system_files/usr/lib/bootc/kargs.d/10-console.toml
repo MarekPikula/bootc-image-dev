@@ -1,0 +1,4 @@
+# Kernel and boot messages on the serial port too, so a headless VM (the CI
+# test) leaves a console log even if it never comes up. The last console= is
+# /dev/console, so the screen (tty0) stays the main console in GNOME Boxes.
+kargs = ["console=ttyS0,115200n8", "console=tty0"]

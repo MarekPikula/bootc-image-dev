@@ -10,8 +10,11 @@ ln -s ../android-dev-firstboot.service \
 #   android-dev-firstboot.service replaces it.
 # avahi, cups, geoclue: root daemons that reach the network on behalf of
 #   desktop users, outside dev's nftables rule. Not needed in this VM.
+# mcelog: machine checks belong to the host. On AMD hosts it fails at boot
+#   ("CPU is unsupported"), leaving the system degraded.
 systemctl mask \
   plasma-setup.service \
   avahi-daemon.service avahi-daemon.socket \
   cups.service cups.socket cups.path cups-browsed.service \
-  geoclue.service
+  geoclue.service \
+  mcelog.service

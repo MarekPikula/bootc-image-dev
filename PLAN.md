@@ -24,7 +24,7 @@ constraints that don't change.
 
 ```
 Containerfile              FROM kinoite@digest; COPY system_files/ /; RUN build_files/build.sh; RUN bootc container lint
-versions.env               pinned: base image digest, Android Studio version + sha256, BIB image digest
+versions.env               pinned build inputs: base image digest, Android Studio version + sha256
 build_files/
   build.sh                 runs the numbered steps in order
   10-packages.sh           JDK 21, git, unzip, squid, bubblewrap, socat, ...
@@ -49,6 +49,7 @@ system_files/              overlay copied to / (paths below are relative to /)
     android-dev-firstboot.service
     multi-user.target.wants/android-dev-firstboot.service   image-owned enablement
     systemd-sysusers.service.d/50-android-dev-vm.conf       imports admin/dev password credentials
+  usr/lib/bootc/kargs.d/10-console.toml   serial console too, for headless logs
   usr/lib/systemd/user-environment-generators/60-dev-proxy
   usr/share/polkit-1/rules.d/00-android-dev.rules
   usr/share/applications/android-studio.desktop
@@ -59,11 +60,14 @@ system_files/              overlay copied to / (paths below are relative to /)
   etc/claude-code/managed-settings.json
   etc/security/pwquality.conf.d/50-android-dev-vm.conf    enforce_for_root
 .pre-commit-config.yaml    hadolint, shellcheck, actionlint, nft-check, squid -k parse, file hygiene
+disk/config.toml           bootc-image-builder config (root size)
+disk/build-qcow2.sh        builds the qcow2 (pinned bootc-image-builder), root and CI only
+tests/lib.sh               check/indent/finish helpers shared by image and VM checks
 tests/image/checks.sh      assertions run inside the built image with podman (no VM)
 tests/image/polkit.sh      runs polkitd in the image and checks dev against every registered action
 tests/image/firstboot.sh   drives the first-boot prompt with typed input in a throwaway container
 tests/image/privileged-files.txt   reviewed setuid/setgid files and file capabilities
-tests/vm/run-vm.sh         boots a qcow2 with qemu/KVM, per-run SSH key via SMBIOS credentials
+tests/vm/run-vm.sh         boots a qcow2 with qemu/KVM (UEFI), per-run SSH key via SMBIOS credentials
 tests/vm/checks.sh         in-guest assertions, run as root and as dev
 .github/workflows/
   _build-test.yml          reusable: lint, build, image checks, qcow2, VM test
@@ -213,9 +217,15 @@ README.md                  for the people running the VM
 
 ### CI
 
-- **`pr.yml`** runs pre-commit, builds without pushing, runs
-  `bootc container lint` and the image checks, builds the qcow2, and runs the
-  VM test.
+- **`_build-test.yml`** (reusable) has three jobs:
+  - `lint`: pre-commit in a Fedora 44 container.
+  - `build`: builds the image in rootful podman, runs `bootc container lint`
+    and the image checks, builds the qcow2 and uploads it as the
+    `android-dev-vm-qcow2` artifact (zstd-compressed, kept 14 days).
+  - `vm-test`: boots that qcow2 with `tests/vm/run-vm.sh` and uploads the
+    console log and journal as `vm-logs`.
+- **`pr.yml`** calls it as job `ci`, so the checks are `ci / lint`,
+  `ci / build` and `ci / vm-test`. All three are required.
 - **`publish.yml`** (push to `main`, weekly, dispatch):
   - Runs the same build and test, then exports an oci-archive.
   - A `publish` job bound to the `release` Environment (deployment branches:
@@ -223,9 +233,14 @@ README.md                  for the people running the VM
   - That job pushes with skopeo and checks that the pushed config digest equals
     the tested one.
   - Tags: `stable` (what VMs track), `44.<yyyymmdd>`, `sha-<git>`.
-- **qcow2.** Built with `quay.io/centos-bootc/bootc-image-builder` (pinned by
-  digest), run directly with `sudo podman run --privileged` against rootful
-  storage.
+- **qcow2.** `disk/build-qcow2.sh` runs
+  `quay.io/centos-bootc/bootc-image-builder` (pinned by digest in the script)
+  with `sudo podman run --privileged` against rootful storage, using
+  `disk/config.toml` (64 GiB root, btrfs because Kinoite names no default).
+  - The installed system tracks the image name it was built from, and the
+    builder has no separate target ref. CI therefore tags the image
+    `ghcr.io/marekpikula/bootc-image-dev:stable` first, so a downloaded qcow2
+    updates from GHCR once publishing exists.
   - The bootc-image-builder repo is archived (merged into osbuild/image-builder),
     but the container is still the documented tool.
   - We don't use the thin GitHub Action, so there's one less third-party action
@@ -245,15 +260,19 @@ separate so you can commit them on their own and push them from the host.
    - ⚙ `pr.yml`: lint, build (no push), bootc lint.
 2. **Accounts and privilege.** sysusers.d, first-boot password
    unit, polkit rule, sudoers assertions, masked services.
-3. **Network containment.** nftables table plus the fail-closed unit, Squid
+3. **VM test harness.**
+   - `disk/` (qcow2 build), `tests/vm/*`, `tests/lib.sh`, serial console in
+     `kargs.d`.
+   - ⚙ `_build-test.yml` with the qcow2 build, the `vm-test` job and the
+     artifact upload. `pr.yml` calls it.
+   - You then make `ci / vm-test` (and `ci / lint`, `ci / build`) required
+     checks in a branch ruleset.
+   - Moved ahead of network containment so every later PR gets tested in a
+     real VM from the start.
+4. **Network containment.** nftables table plus the fail-closed unit, Squid
    config, allowlist, log access and helper, proxy environment for `dev`,
    `docs/security-model.md`, and `nft-check` and `squid -k parse` pre-commit
-   hooks.
-4. **VM test harness.**
-   - `tests/vm/*`.
-   - ⚙ `_build-test.yml` with the qcow2 build, the `vm-test` job and the
-     artifact upload.
-   - You then make `vm-test` a required check in a branch ruleset.
+   hooks. Its VM assertions go into `tests/vm/checks.sh`.
 5. **Android tooling.** Android Studio (sha256-verified, desktop entry, proxy
    seeding, platform updater disabled), JDK 21, build tools.
    Also remove `vpnc` and `open-vm-tools-desktop`: nothing needs them in a
@@ -284,24 +303,30 @@ separate so you can commit them on their own and push them from the host.
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | documented in README | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
-VM test assertions:
+VM test assertions (`tests/vm/checks.sh`):
 
-- **Control.** Root can connect directly, which proves the negative checks
-  below actually test something.
-- **dev through the proxy.**
-  - `https://dl.google.com` and `https://api.anthropic.com` succeed.
-  - `https://example.com` gets a 403, and the access log shows it as
-    `TCP_DENIED`.
-- **dev directly.** Blocked for TCP 443 over IPv4 and IPv6, UDP 53 to a public
-  resolver, and ICMP.
-- **dev's login environment.** Proxy variables and `JAVA_TOOL_OPTIONS` are set.
-- **dev's privileges.**
-  - `sudo -n true` fails, and so does `run0 true`.
-  - `pkcheck` reports "not authorized" for systemd manage-units,
-    NetworkManager settings and flatpak install.
-  - `id` doesn't show `wheel`.
-  - dev can open `/dev/kvm` (the emulator needs it without `kvm` membership).
-- **Updates.** The stage-only drop-in is in effect.
+- **Now (accounts and privilege).**
+  - Boot finishes with no failed units, SELinux is enforcing, the `kargs.d`
+    console arguments are applied, and bootc tracks the GHCR image.
+  - `android-dev-firstboot.service` ran and succeeded, sysusers created the
+    accounts, both passwords were set from credentials, and the homes exist,
+    are private and are labelled `user_home_dir_t`. Root is still locked.
+  - dev: `sudo`, `run0` and `pkexec` are denied (non-zero, no hang waiting for
+    a password), `su` is refused before any prompt, and `pkcheck` on a real
+    dev process says no to managing units.
+  - `/dev/kvm` is mode 0666 and dev isn't refused when opening it. Without
+    nested virtualization the node still exists (udev `static_node`) but the
+    open fails with a different error, which the check accepts.
+- **With network containment.**
+  - Control: root can connect directly, which proves the negative checks
+    below actually test something.
+  - dev through the proxy: `https://dl.google.com` and
+    `https://api.anthropic.com` succeed, and `https://example.com` gets a 403
+    that the access log shows as `TCP_DENIED`.
+  - dev directly: blocked for TCP 443 over IPv4 and IPv6, UDP 53 to a public
+    resolver, and ICMP.
+  - dev's login environment has the proxy variables and `JAVA_TOOL_OPTIONS`.
+- **With updates.** The stage-only drop-in is in effect.
 
 The test harness reaches the guest over SSH without shipping any test users or
 keys in the image:
@@ -309,15 +334,17 @@ keys in the image:
 - `run-vm.sh` generates a key for each run.
 - It passes `ssh.authorized_keys.root` and `ssh.listen` as SMBIOS type-11 system
   credentials, which systemd-ssh-generator (systemd ≥ 256) picks up.
-- The connection goes through a qemu user-net port forward.
+- The connection goes through a qemu user-net port forward. The VM boots with
+  UEFI (OVMF) from a throwaway overlay, so the qcow2 stays untouched.
 - First-boot prompts are skipped with credentials too: `firstboot.locale`,
   `firstboot.keymap` and `firstboot.timezone` for systemd-firstboot, and
-  `passwd.hashed-password.admin` / `.dev` (per-run throwaway values) for the
-  password prompt. The test asserts that `android-dev-firstboot.service`
-  succeeded and that both homes exist.
-- It also asserts that `systemd-sysusers.service` created the accounts on
-  first boot. Its `ConditionNeedsUpdate=/etc` may skip it on later updates,
-  which matters only when a future image adds accounts.
+  `passwd.plaintext-password.admin` / `.dev` (random per run) for the password
+  prompt.
+- `systemd-sysusers.service`'s `ConditionNeedsUpdate=/etc` may skip it on later
+  updates, which matters only when a future image adds accounts.
+- Locally: `gh run download <run> -n android-dev-vm-qcow2`, then
+  `tests/vm/run-vm.sh android-dev-vm.qcow2`. The script's mechanics were
+  checked against a stock Fedora Cloud image in the devcontainer.
 
 ## Open questions
 

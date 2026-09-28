@@ -8,18 +8,8 @@ set -euo pipefail
 
 image=${1:?usage: $0 IMAGE}
 cd "$(dirname "$(readlink -f "$0")")/../.."
-
-failed=()
-check() {
-  local desc=$1
-  shift
-  if "$@"; then
-    echo "ok    $desc"
-  else
-    echo "FAIL  $desc"
-    failed+=("$desc")
-  fi
-}
+# shellcheck source=tests/lib.sh
+. tests/lib.sh
 
 # expect_meta Labels|Annotations KEY VALUE
 expect_meta() {
@@ -40,10 +30,6 @@ out="$(podman exec "$ctr" systemd-sysusers 2>&1)" || { echo "$out" >&2; exit 1; 
 # Runs the bash script on stdin inside the image.
 in_image() {
   podman exec -i "$ctr" /usr/bin/bash -euo pipefail -s
-}
-
-indent() {
-  sed 's/^/      /'
 }
 
 # /sysroot is skipped: it holds the ostree repo's copies of the same files.
@@ -184,19 +170,15 @@ check "root is locked" in_image <<'EOF'
 field="$(getent shadow root | cut -d: -f2)"
 [[ $field =~ ^[!*]+$ ]] || { echo "      root's shadow field: '$field'"; exit 1; }
 EOF
-check "plasma-setup, avahi, cups and geoclue are masked" in_image <<'EOF'
+check "plasma-setup, avahi, cups, geoclue and mcelog are masked" in_image <<'EOF'
 bad=0
 for unit in plasma-setup.service avahi-daemon.service avahi-daemon.socket \
-  cups.service cups.socket cups.path cups-browsed.service geoclue.service; do
+  cups.service cups.socket cups.path cups-browsed.service geoclue.service \
+  mcelog.service; do
   state="$(systemctl is-enabled "$unit" 2>&1 || true)"
   [[ $state == masked ]] || { echo "      $unit: $state"; bad=1; }
 done
 exit "$bad"
 EOF
 
-if ((${#failed[@]})); then
-  echo "image checks: FAILED:" >&2
-  printf '  %s\n' "${failed[@]}" >&2
-  exit 1
-fi
-echo "image checks: OK"
+finish "image checks"

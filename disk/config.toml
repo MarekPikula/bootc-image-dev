@@ -1,0 +1,9 @@
+# bootc-image-builder config for the qcow2 (disk/build-qcow2.sh). No users,
+# keys or passwords: accounts come from sysusers.d and passwords from the
+# first-boot prompt.
+
+# Room for the Android SDK, emulator images and Gradle caches. qcow2 is sparse,
+# so unused space costs nothing on the host.
+[[customizations.filesystem]]
+mountpoint = "/"
+minsize = "64 GiB"
