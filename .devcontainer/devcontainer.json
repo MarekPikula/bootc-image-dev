@@ -72,7 +72,10 @@
 
   "remoteEnv": {
     // Don't let VS Code forward your SSH agent (it could push anywhere).
-    "SSH_AUTH_SOCK": ""
+    "SSH_AUTH_SOCK": "",
+
+    // Needed for git signing in VS Code GUI.
+    "LANG": "C.UTF-8"
   },
 
   // Apply the default-deny firewall on every start, then sanity-check tooling.
