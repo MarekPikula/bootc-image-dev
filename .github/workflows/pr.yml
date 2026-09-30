@@ -12,6 +12,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Checks show up as "ci / lint", "ci / build" and "ci / vm-test".
+  # Checks show up as "ci / lint" and "ci / build" (which includes the VM test).
   ci:
     uses: ./.github/workflows/_build-test.yml

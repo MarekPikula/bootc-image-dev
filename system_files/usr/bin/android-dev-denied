@@ -8,12 +8,14 @@ set -euo pipefail
 
 lines=${1:-5000}
 # Native log format: time elapsed client result/status bytes method URL ...
-# The URL is host:port for CONNECT and scheme://host/... otherwise.
+# The URL is host:port for CONNECT (an IPv6 address in brackets) and
+# scheme://host/... otherwise.
 tail -n "$lines" /var/log/squid/access.log |
   awk '$4 ~ /^TCP_DENIED\// {
     host = $7
     sub(/^[a-z]+:\/\//, "", host)
-    sub(/[:\/].*/, "", host)
+    if (host ~ /^\[/) sub(/\].*/, "]", host)
+    else sub(/[:\/].*/, "", host)
     print host
   }' |
   sort | uniq -c | sort -rn

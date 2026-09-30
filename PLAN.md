@@ -87,12 +87,19 @@ README.md                  for the people running the VM
 
 - **The rule.** `table inet dev_egress` has an `output` hook chain. It accepts
   traffic on `oif "lo"`, and stops everything else whose socket owner is
-  UID 1500. This covers IPv4, IPv6, TCP, UDP, ICMP and raw sockets.
+  UID 1500. This covers IPv4, IPv6, TCP, UDP, ICMP and raw IP sockets.
+  Packet sockets (AF_PACKET) bypass the inet hooks, which is why no binary
+  dev can run keeps `cap_net_raw` for them (see Privileged files).
   - TCP gets a reset, so `connect()` fails at once with "Connection refused".
     A dropped SYN only fails `connect()` after the kernel's retries time out,
     and programs would hang for minutes.
   - Everything else is dropped. UDP sends then fail at once with EPERM.
   - Squid runs as `squid`, so its own connections aren't matched.
+  - It assumes dev has no subordinate UIDs or GIDs, which the image checks
+    assert. With a range, dev could run processes under other UIDs
+    (`podman unshare`, `podman run --user`) that the rule wouldn't match.
+    Rootless containers for dev would need the rule widened to dev's range
+    first.
 - **Coexisting with firewalld.** The rule lives in its own table and is keyed
   on the numeric UID. A drop in any base chain is final, so firewalld can't
   re-allow dev's traffic. `nftables.service` stays disabled.
@@ -116,8 +123,9 @@ README.md                  for the people running the VM
   - `acl allowed dstdomain -n "/usr/lib/android-dev-vm/squid/allowlist.txt"`.
     The `-n` flag skips reverse DNS on IP-literal requests, which an attacker's
     PTR record could otherwise match.
-  - CONNECT is allowed only to port 443, plain HTTP only to port 80, then
-    `http_access deny all`, which also closes the cache manager.
+  - Only CONNECT to port 443, then `http_access deny all`, which also closes
+    the cache manager. No plain HTTP, which anyone on the path could read or
+    tamper with.
   - Nothing is cached, and `forwarded_for delete` keeps the client address
     out of requests.
   - A `squid.service` drop-in replaces `ExecStart` to use our config, because
@@ -217,11 +225,14 @@ README.md                  for the people running the VM
   Remaining channels are listed in [Open questions](#open-questions).
 - **Privileged files.** `tests/image/privileged-files.txt` lists the reviewed
   setuid/setgid files and file capabilities, and the image checks fail on any
-  difference. Several have `cap_net_raw` (`arping`, `mtr-packet`). Their
-  sockets are still owned by dev, and the VM test covers ICMP traffic.
-  `gst-ptp-helper` also had `cap_net_admin`, which is enough to delete the
-  nftables rule, so `50-caps.sh` removes its capabilities (the PTP clock is
-  unused here).
+  difference. `mtr-packet` and `clockdiff` keep `cap_net_raw` for raw IP
+  sockets, which are still owned by dev and matched by the rule (the VM test
+  covers ICMP). `50-caps.sh` removes the capabilities that get around the
+  rule, from helpers nothing here needs:
+  - `gst-ptp-helper` (`cap_net_admin`, enough to delete the nftables rule).
+  - `arping` and `ksgrd_network_helper` (`cap_net_raw` for packet sockets,
+    which bypass the inet hooks. arping sends frames of the caller's
+    choosing onto the VM's network).
 - **Emulator access.** Fedora's udev rules make `/dev/kvm` mode 0666, so `dev`
   needs no `kvm` membership (the image checks assert the rule). Membership
   would also be a trap: Kinoite keeps `kvm` only in `/usr/lib/group`
@@ -243,15 +254,17 @@ README.md                  for the people running the VM
 
 ### CI
 
-- **`_build-test.yml`** (reusable) has three jobs:
+- **`_build-test.yml`** (reusable) has two jobs:
   - `lint`: pre-commit in a Fedora 44 container.
   - `build`: builds the image in rootful podman, runs `bootc container lint`
-    and the image checks, builds the qcow2 and uploads it as the
-    `android-dev-vm-qcow2` artifact (zstd-compressed, kept 14 days).
-  - `vm-test`: boots that qcow2 with `tests/vm/run-vm.sh` and uploads the
-    console log and journal as `vm-logs`.
-- **`pr.yml`** calls it as job `ci`, so the checks are `ci / lint`,
-  `ci / build` and `ci / vm-test`. All three are required.
+    and the image checks, builds the qcow2, boots it with
+    `tests/vm/run-vm.sh`, and uploads the console log and journal as
+    `vm-logs` and the qcow2 as `android-dev-vm-qcow2` (zstd-compressed, kept
+    14 days, also when the VM test fails).
+  - The VM test runs in the build job so the 3.8 GB qcow2 doesn't go through
+    artifact storage between jobs (that took about 4.5 minutes per run).
+- **`pr.yml`** calls it as job `ci`, so the checks are `ci / lint` and
+  `ci / build`. Both are required.
 - **`publish.yml`** (push to `main`, weekly, dispatch):
   - Runs the same build and test, then exports an oci-archive.
   - A `publish` job bound to the `release` Environment (deployment branches:
@@ -291,8 +304,8 @@ separate so you can commit them on their own and push them from the host.
      `kargs.d`.
    - ⚙ `_build-test.yml` with the qcow2 build, the `vm-test` job and the
      artifact upload. `pr.yml` calls it.
-   - You then make `ci / vm-test` (and `ci / lint`, `ci / build`) required
-     checks in a branch ruleset.
+   - You then make the checks required in a branch ruleset. Since PR 4 the
+     VM test runs in `ci / build`, so those are `ci / lint` and `ci / build`.
    - Moved ahead of network containment so every later PR gets tested in a
      real VM from the start.
 4. **Network containment.** nftables table plus the fail-closed unit, Squid

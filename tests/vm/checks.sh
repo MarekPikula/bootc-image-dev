@@ -150,6 +150,14 @@ egress_rule_loaded() {
 }
 check "dev's egress rule is loaded and survives a firewalld reload" egress_rule_loaded
 
+# The rule matches UID 1500 only (see tests/image/checks.sh).
+no_subids() {
+  local found
+  found="$(grep -sHE '^(dev|1500):' /etc/subuid /etc/subgid || true)"
+  [[ -z $found ]] || { indent <<<"$found"; return 1; }
+}
+check "dev has no subordinate UIDs or GIDs" no_subids
+
 # Control: without it, the checks below could pass on a VM with no network.
 root_direct() {
   curl -sS -o /dev/null --max-time 30 https://dl.google.com/ 2>&1 | indent
@@ -175,14 +183,14 @@ dev_blocked() {
 check "dev: direct TCP over IPv4 is blocked" dev_blocked 'exec 3<>/dev/tcp/1.1.1.1/443'
 check "dev: direct TCP over IPv6 is blocked" dev_blocked 'exec 3<>/dev/tcp/2606:4700:4700::1111/443'
 check "dev: direct UDP (DNS to 1.1.1.1) is blocked" dev_blocked 'exec 3>/dev/udp/1.1.1.1/53; printf x >&3'
-check "dev: ICMP is blocked" dev_blocked 'ping -c 1 -W 5 1.1.1.1'
+check "dev: ICMP is blocked" dev_blocked 'ping -c 1 -W 1 1.1.1.1'
 
 # As dev with a clean login environment, so the proxy comes from profile.d.
 as_dev_login() {
   as_dev env -i HOME=/var/home/dev USER=dev LOGNAME=dev PATH=/usr/bin bash -lc "$1"
 }
 
-# $1: host, $2: the CONNECT status Squid must answer with.
+# $1: host[:port], $2: the CONNECT status Squid must answer with.
 via_proxy() {
   as_dev_login "curl -sS -o /dev/null --max-time 30 -w '%{http_connect}' https://$1/"
   [[ ${out##*$'\n'} == "$2" ]] || { echo "      rc $rc: $out"; return 1; }
@@ -190,6 +198,15 @@ via_proxy() {
 check "dev: dl.google.com through Squid" via_proxy dl.google.com 200
 check "dev: api.anthropic.com through Squid" via_proxy api.anthropic.com 200
 check "dev: example.com refused by Squid (403)" via_proxy example.com 403
+check "dev: IP literals refused by Squid (403)" via_proxy 1.1.1.1 403
+check "dev: ports other than 443 refused by Squid (403)" via_proxy dl.google.com:8443 403
+
+# HTTPS only: a plain HTTP request is refused even to an allowlisted host.
+plain_http_refused() {
+  as_dev_login "curl -sS -o /dev/null --max-time 30 -w '%{http_code}' http://dl.google.com/"
+  [[ ${out##*$'\n'} == 403 ]] || { echo "      rc $rc: $out"; return 1; }
+}
+check "dev: plain HTTP refused by Squid (403)" plain_http_refused
 
 # Squid's log writer may lag a moment behind the refusal.
 denied_listed() {
@@ -217,5 +234,29 @@ user_manager_env() {
   fi
 }
 check "dev's systemd --user environment has the proxy settings" user_manager_env
+
+# Fail closed, as at boot: when the rule's unit fails, systemd-user-sessions
+# can't start and /run/nologin stays (pam_nologin then refuses everyone but
+# root, see tests/image/checks.sh). A runtime drop-in makes the unit fail, and
+# everything is put back afterwards. Runs last because it changes state.
+fail_closed() {
+  local dropin=/run/systemd/system/dev-egress-firewall.service.d bad=0
+  mkdir -p "$dropin"
+  printf '[Service]\nExecStart=\nExecStart=/usr/bin/false\n' >"$dropin/50-fail.conf"
+  systemctl daemon-reload
+  # Requires= stops systemd-user-sessions too, which recreates /run/nologin.
+  systemctl stop dev-egress-firewall.service
+  if systemctl start systemd-user-sessions.service 2>/dev/null; then
+    echo "      systemd-user-sessions started without the rule's unit"
+    bad=1
+  fi
+  [[ -e /run/nologin ]] || { echo "      no /run/nologin"; bad=1; }
+  rm -r "$dropin"
+  systemctl daemon-reload
+  systemctl start systemd-user-sessions.service || bad=1
+  [[ ! -e /run/nologin ]] || { echo "      /run/nologin left after restoring"; bad=1; }
+  return "$bad"
+}
+check "fail closed: no user sessions without the rule's unit" fail_closed
 
 finish "vm checks"

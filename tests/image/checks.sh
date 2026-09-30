@@ -184,6 +184,14 @@ exit "$bad"
 EOF
 
 # Network containment (CLAUDE.md): dev reaches the network only through Squid.
+# The rule matches UID 1500 only. A subordinate range would let dev run
+# processes under other UIDs (podman unshare, podman run --user), which it
+# wouldn't match.
+check "dev has no subordinate UIDs or GIDs" in_image <<'EOF'
+# A missing file has no ranges (-s). The output decides, not grep's status.
+found="$(grep -sHE '^(dev|1500):' /etc/subuid /etc/subgid || true)"
+[[ -z $found ]] || { sed 's/^/      /' <<<"$found"; exit 1; }
+EOF
 # nft -c needs CAP_NET_ADMIN. --network=none keeps it inside an empty netns.
 check "egress rule parses (the image's nft)" \
   podman run --rm --network=none --cap-add NET_ADMIN "$image" \
@@ -208,9 +216,27 @@ check "Squid config parses without warnings (the image's squid)" in_image <<'EOF
 out="$(squid -k parse -f /usr/lib/android-dev-vm/squid/squid.conf 2>&1)"
 ! grep -E 'WARNING|ERROR|FATAL' <<<"$out" | sed 's/^/      /' | grep .
 EOF
-check "allowlist has no .google.com, .googleapis.com or storage.googleapis.com" in_image <<'EOF'
-! grep -nxE '\.google\.com|\.googleapis\.com|storage\.googleapis\.com' \
-  /usr/lib/android-dev-vm/squid/allowlist.txt | sed 's/^/      /' | grep .
+# Matches entries the way Squid's dstdomain does: every token on a line,
+# case-insensitive, a trailing dot ignored, a leading dot also matching
+# subdomains. So .com, .Google.com and .googleapis.com are all caught.
+check "allowlist allows neither *.google.com nor storage.googleapis.com" in_image <<'EOF'
+awk '
+  function covers(entry, host) {
+    if (substr(entry, 1, 1) != ".") return entry == host
+    return host == substr(entry, 2) || substr("." host, length(host) + 2 - length(entry)) == entry
+  }
+  /^[[:space:]]*(#|$)/ { next }
+  {
+    for (i = 1; i <= NF; i++) {
+      entry = tolower($i)
+      sub(/\.$/, "", entry)
+      if (covers(entry, "any.google.com") || covers(entry, "storage.googleapis.com")) {
+        print "      line " NR ": " $0
+        bad = 1
+      }
+    }
+  }
+  END { exit bad }' /usr/lib/android-dev-vm/squid/allowlist.txt
 EOF
 check "proxy settings: dev gets them, admin doesn't" in_image <<'EOF'
 env_of() {

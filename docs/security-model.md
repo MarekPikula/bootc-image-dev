@@ -23,9 +23,11 @@ them.
 - `admin` (UID 1000, `wheel`) is for administration only. Never type admin's
   password in dev's session.
 - setuid/setgid binaries and file capabilities are reviewed. The image checks
-  fail when a package or base update adds one. GStreamer's `gst-ptp-helper`
-  loses its `cap_net_admin`, which would be enough to remove the network rule
-  below if the helper had a bug.
+  fail when a package or base update adds one. Three helpers lose their
+  capabilities, because they could get around the network rule below:
+  GStreamer's `gst-ptp-helper` (`cap_net_admin`, enough to remove the rule),
+  and `arping` and System Monitor's `ksgrd_network_helper` (`cap_net_raw` for
+  packet sockets, which the rule doesn't see).
 
 ## Network
 
@@ -33,13 +35,14 @@ them.
 
 - **The nftables rule.** Table `inet dev_egress` stops every packet sent by a
   socket that UID 1500 owns, unless it goes over loopback. This covers IPv4
-  and IPv6, TCP, UDP, ICMP and raw sockets, and anything `dev` starts:
+  and IPv6, TCP, UDP, ICMP and raw IP sockets, and anything `dev` starts:
   scripts, Gradle, the emulator, containers (their user-mode networking runs
   as `dev`). A direct TCP connection fails at once with "Connection refused",
   and a UDP send with "Operation not permitted".
 - **Squid** listens on `127.0.0.1:3128` and is the only way out for `dev`. It
-  allows HTTPS (CONNECT to port 443) and plain HTTP (port 80), only to the
-  domains in `squid/allowlist.txt`, and refuses everything else with a 403.
+  allows only HTTPS (CONNECT to port 443), only to the domains in
+  `squid/allowlist.txt`, and refuses everything else with a 403, plain HTTP
+  included.
   It matches domain names only, never reverse DNS.
 - **Failing closed.** The rule loads early in boot, before the network comes
   up. User logins require it: if it doesn't load, `/run/nologin` stays and
@@ -77,6 +80,11 @@ These are known and accepted for now. Some have a planned fix.
   `*.githubusercontent.com` and the Anthropic API can all carry data out, for
   example as a push to any GitHub repository. Planned: narrow the GitHub
   hosts once we know which ones builds need.
+- **Domain fronting.** Squid checks only the name in the CONNECT request,
+  not the TLS server name or `Host` header inside the tunnel. A shared front
+  end behind an allowlisted name (Google's for `dl.google.com`, the GitHub
+  CDN) might route the tunnel to a service that isn't allowlisted. Whether it
+  does depends on the provider.
 - **Services on loopback.** The rule allows all loopback traffic, so `dev`
   reaches any local service, not only Squid. Today the ones that matter are
   Squid and the DNS stub.
@@ -91,7 +99,9 @@ These are known and accepted for now. Some have a planned fix.
   control of whoever runs the VM on the host.
 - **The emulator.** Android guests in the emulator get only proxied HTTP(S)
   to allowlisted domains, so the Play Store and similar don't work.
-- **admin.** admin's traffic isn't filtered.
+- **admin.** admin's traffic isn't filtered. admin must not give `dev`
+  subordinate UIDs (`usermod --add-subuids`): processes under those UIDs
+  aren't matched by the rule.
 - **Kernel and privileged-binary bugs.** A local root exploit, or a bug in a
   reviewed setuid or capability binary, defeats all of the above.
 - **Image trust.** Images aren't signed yet. VMs accept whatever reaches the

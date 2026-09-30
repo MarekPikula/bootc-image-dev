@@ -25,13 +25,11 @@
 4755 /usr/lib/polkit-1/polkit-agent-helper-1
 4750 /usr/libexec/dbus-1/dbus-daemon-launch-helper
 2711 /usr/libexec/utempter/utempter
-caps /usr/bin/arping cap_net_raw=p
 caps /usr/bin/clockdiff cap_net_raw=p
 caps /usr/bin/kwin_wayland cap_sys_nice=ep
 caps /usr/bin/mtr-packet cap_net_raw=ep
 caps /usr/bin/newgidmap cap_setgid=ep
 caps /usr/bin/newuidmap cap_setuid=ep
-caps /usr/libexec/ksysguard/ksgrd_network_helper cap_net_raw=ep
 caps /usr/libexec/ksystemstats_intel_helper cap_perfmon=ep
 caps /usr/libexec/sssd/krb5_child cap_dac_read_search,cap_setgid,cap_setuid=p
 caps /usr/libexec/sssd/ldap_child cap_dac_read_search=p
