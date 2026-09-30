@@ -68,15 +68,11 @@ expect_firstboot_gives_up() {
   firstboot_prompt gives-up "$(printf '\n%.0s' {1..12})"
 }
 
-# versions.env pins repo:tag@digest, and buildah records what FROM actually used
-# as repo@digest.
-pinned_base="$(sed -n 's/^BASE_IMAGE=//p' versions.env)"
-pinned_repo="${pinned_base%%@*}"
-pinned_base_ref="${pinned_repo%:*}@${pinned_base#*@}"
+base="$(sed -n 's/^BASE_IMAGE=//p' versions.env)"
 
 check "is a bootc image" expect_meta Labels containers.bootc 1
-check "built from the base pinned in versions.env" \
-  expect_meta Annotations org.opencontainers.image.base.name "$pinned_base_ref"
+check "built from the base in versions.env" \
+  expect_meta Annotations org.opencontainers.image.base.name "$base"
 
 # No credentials in the image (CLAUDE.md). A password field may only hold a
 # marker with no hash in it: '!'/'*' characters or '!locked' ('!$6$...' is a

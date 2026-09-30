@@ -10,7 +10,7 @@ constraints that don't change.
 
 | Topic | Decision | Why |
 |---|---|---|
-| Base image | `quay.io/fedora/fedora-kinoite:44`, pinned by digest in `versions.env` | A real bootc image (`containers.bootc=1`) with no third-party privilege helpers. [Why not Aurora](#why-not-aurora) |
+| Base image | The rolling `quay.io/fedora/fedora-kinoite:44` tag, set in `versions.env` | A real bootc image (`containers.bootc=1`) with no third-party privilege helpers. [Why not Aurora](#why-not-aurora). A digest pin broke within two days because Fedora deletes superseded manifests. `quay.io/fedora-ostree-desktops/kinoite` keeps dated tags, but only for about four weeks. Each image records the base digest it was built from in its `org.opencontainers.image.base.*` annotations. |
 | Repo visibility | Public | Branch-restricted Environments and required checks work on the free plan, VMs pull from GHCR without credentials, and Actions minutes and storage for multi-GB qcow2 artifacts are free. |
 | Accounts | `admin` = UID 1000 (`wheel`), `dev` = UID 1500 (no extra groups), via sysusers.d | This is the approach bootc recommends. Fixed UIDs keep the nftables rule stable. |
 | Passwords | One-shot tty1 prompt at first boot, before the display manager (Plasma Login Manager on Kinoite 44) | Nothing is baked in, there's no window where accounts have no password, and it works in the Boxes console. |
@@ -23,8 +23,8 @@ constraints that don't change.
 ## Repository layout
 
 ```
-Containerfile              FROM kinoite@digest; COPY system_files/ /; RUN build_files/build.sh; RUN bootc container lint
-versions.env               pinned build inputs: base image digest, Android Studio version + sha256
+Containerfile              FROM kinoite:44; COPY system_files/ /; RUN build_files/build.sh; RUN bootc container lint
+versions.env               build inputs: base image tag, Android Studio version + sha256
 build_files/
   build.sh                 runs the numbered steps in order
   10-packages.sh           JDK 21, git, unzip, squid, bubblewrap, socat, ...
@@ -210,7 +210,7 @@ README.md                  for the people running the VM
 - **Rollback.** `bootc rollback` swaps to the previous deployment and discards
   any staged one. The README explains that the next timer run will stage the
   newer image again.
-- **Weekly rebuild.** The CI rebuild picks up the current Kinoite 44 digest and
+- **Weekly rebuild.** The CI rebuild picks up the current Kinoite 44 image and
   the latest `claude-code` RPM.
 - **Other bumps.** Android Studio and the Fedora major version change through
   PRs that edit `versions.env`.

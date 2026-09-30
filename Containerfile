@@ -1,11 +1,11 @@
 # bootc image for the Android dev VM. See PLAN.md for the design.
 #
-# Build with the pinned inputs:
+# Build with the inputs in versions.env:
 #   podman build --build-arg-file versions.env -t localhost/android-dev-vm .
 # buildah records the actual base in the image's
 # org.opencontainers.image.base.{name,digest} annotations.
 
-# No default on purpose: the pinned value lives in versions.env.
+# No default on purpose: the value lives in versions.env.
 ARG BASE_IMAGE
 
 # Build scripts are bind-mounted from this stage, so they never land in the

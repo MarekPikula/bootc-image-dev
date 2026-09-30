@@ -9,8 +9,9 @@ questions. Read it before starting work, and update it when a decision changes.
 
 ## Non-negotiables
 
-- **Base image** is `quay.io/fedora/fedora-kinoite:44`, pinned by digest.
-  Aurora was rejected for its privilege-escalation paths (see PLAN.md).
+- **Base image** is the rolling `quay.io/fedora/fedora-kinoite:44` tag. Fedora
+  deletes superseded manifests, so a digest pin breaks within days. Aurora was
+  rejected for its privilege-escalation paths (see PLAN.md).
 - **Accounts:**
   - `admin` (UID 1000) is in `wheel` and used only for administration.
   - `dev` (UID 1500) is used for daily work by the human and by Claude Code.
