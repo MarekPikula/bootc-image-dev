@@ -14,7 +14,23 @@ ARG BASE_IMAGE
 FROM scratch AS ctx
 COPY build_files/ /
 
+# packages.sh alone, so editing another build step doesn't redo the dnf layer.
+FROM scratch AS pkgs
+COPY build_files/packages.sh /
+
 FROM ${BASE_IMAGE}
+
+# Every package install goes here, in one layer, before system_files/: package
+# scriptlets run systemd-sysusers over every sysusers.d file, and with ours
+# present they'd bake admin and dev into the image's /etc/passwd
+# (tests/image/checks.sh catches that). The tmpfs mounts keep dnf's cache,
+# state and logs out of the image.
+RUN --mount=type=bind,from=pkgs,source=/,target=/ctx \
+    --mount=type=tmpfs,target=/run \
+    --mount=type=tmpfs,target=/var/cache \
+    --mount=type=tmpfs,target=/var/lib/dnf \
+    --mount=type=tmpfs,target=/var/log \
+    /ctx/packages.sh
 
 # Shown by `bootc status` as the deployment version. CI sets it; otherwise the
 # base image's version (e.g. Kinoite's 44.YYYYMMDD.N) would show instead.

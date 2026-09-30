@@ -102,7 +102,7 @@ dev_denied() {
   as_dev "$@"
   case $rc in
     0) echo "      $* succeeded as dev" ;;
-    124) echo "      $* hung (waiting for a password?)" ;;
+    124) echo "      $* hung for 30 s" ;;
     255) echo "      $out" ;;
     *) return 0 ;;
   esac
@@ -140,5 +140,82 @@ dev_kvm() {
     { echo "      $out"; return 1; }
 }
 check "dev may open /dev/kvm (mode 0666)" dev_kvm
+
+# Network containment.
+
+# firewalld owns only its own table, so a reload must leave ours alone.
+egress_rule_loaded() {
+  firewall-cmd --reload >/dev/null &&
+    nft list chain inet dev_egress output | grep -q 'meta skuid 1500 counter'
+}
+check "dev's egress rule is loaded and survives a firewalld reload" egress_rule_loaded
+
+# Control: without it, the checks below could pass on a VM with no network.
+root_direct() {
+  curl -sS -o /dev/null --max-time 30 https://dl.google.com/ 2>&1 | indent
+}
+check "control: root connects directly" root_direct
+
+# Packets the rule has stopped for dev so far, from its counters.
+dev_stopped_packets() {
+  nft list chain inet dev_egress output | awk '/meta skuid 1500/ && !/oif/ {
+    for (i = 1; i < NF; i++) if ($i == "packets") n += $(i + 1)
+  } END { print n + 0 }'
+}
+
+# Passes if the bash snippet, run as dev, fails without hanging and the rule's
+# counters went up. The counters show it was the rule: a missing route or an
+# unreachable host would fail too, but prove nothing.
+dev_blocked() {
+  local before
+  before="$(dev_stopped_packets)"
+  dev_denied bash -c "$1" || return 1
+  (("$(dev_stopped_packets)" > before)) || { echo "      not stopped by the rule: $out"; return 1; }
+}
+check "dev: direct TCP over IPv4 is blocked" dev_blocked 'exec 3<>/dev/tcp/1.1.1.1/443'
+check "dev: direct TCP over IPv6 is blocked" dev_blocked 'exec 3<>/dev/tcp/2606:4700:4700::1111/443'
+check "dev: direct UDP (DNS to 1.1.1.1) is blocked" dev_blocked 'exec 3>/dev/udp/1.1.1.1/53; printf x >&3'
+check "dev: ICMP is blocked" dev_blocked 'ping -c 1 -W 5 1.1.1.1'
+
+# As dev with a clean login environment, so the proxy comes from profile.d.
+as_dev_login() {
+  as_dev env -i HOME=/var/home/dev USER=dev LOGNAME=dev PATH=/usr/bin bash -lc "$1"
+}
+
+# $1: host, $2: the CONNECT status Squid must answer with.
+via_proxy() {
+  as_dev_login "curl -sS -o /dev/null --max-time 30 -w '%{http_connect}' https://$1/"
+  [[ ${out##*$'\n'} == "$2" ]] || { echo "      rc $rc: $out"; return 1; }
+}
+check "dev: dl.google.com through Squid" via_proxy dl.google.com 200
+check "dev: api.anthropic.com through Squid" via_proxy api.anthropic.com 200
+check "dev: example.com refused by Squid (403)" via_proxy example.com 403
+
+# Squid's log writer may lag a moment behind the refusal.
+denied_listed() {
+  local _
+  for _ in {1..10}; do
+    as_dev_login android-dev-denied
+    [[ $rc == 0 && $out == *" example.com"* ]] && return 0
+    sleep 1
+  done
+  echo "      rc $rc: $out"
+  return 1
+}
+check "dev: android-dev-denied lists example.com" denied_listed
+
+# The generator's output is parsed by systemd, not a shell: check the quoted
+# value arrives whole, in a service dev's manager starts.
+user_manager_env() {
+  local env
+  systemctl start user@1500.service
+  env="$(systemd-run -M dev@ --user --wait --pipe --quiet printenv)"
+  if ! grep -qx 'https_proxy=http://127.0.0.1:3128' <<<"$env" ||
+    ! grep -qx 'JAVA_TOOL_OPTIONS=-Dhttp.proxyHost=127.0.0.1 .*-Dhttp.nonProxyHosts=localhost|127.0.0.1|\[::1\]' <<<"$env"; then
+    grep -iE 'proxy|java' <<<"$env" | indent
+    return 1
+  fi
+}
+check "dev's systemd --user environment has the proxy settings" user_manager_env
 
 finish "vm checks"

@@ -3,7 +3,7 @@
 This is the roadmap for the bootc Android dev VM. CLAUDE.md lists the
 constraints that don't change.
 
-- Status: Phase 1 (planning).
+- Status: PRs 1–3 merged, PR 4 (network containment) in review.
 - Research checked against upstream docs on 2026-09-28.
 
 ## Decisions
@@ -23,20 +23,23 @@ constraints that don't change.
 ## Repository layout
 
 ```
-Containerfile              FROM kinoite:44; COPY system_files/ /; RUN build_files/build.sh; RUN bootc container lint
+Containerfile              FROM kinoite:44; RUN packages.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint
 versions.env               build inputs: base image tag, Android Studio version + sha256
 build_files/
+  packages.sh              every package install, in one layer before COPY system_files/
+                           (see the Containerfile): squid, later JDK 21, Claude Code, ...
   build.sh                 runs the numbered steps in order
-  10-packages.sh           JDK 21, git, unzip, squid, bubblewrap, socat, ...
   15-su.sh                 su for wheel only (pam_wheel requisite)
   20-android-studio.sh     download, sha256 check, unpack to /usr/lib/android-studio
-  30-claude-code.sh        dnf repo, GPG fingerprint check, install
-  40-services.sh           enable/disable/mask units
+  30-claude-code.sh        managed settings (the RPM itself is installed by packages.sh)
+  40-services.sh           enable (symlinks in /usr) and mask units
+  50-caps.sh               drops file capabilities that could undo the network rule
 system_files/              overlay copied to / (paths below are relative to /)
   usr/lib/sysusers.d/android-dev-vm.conf
   usr/lib/tmpfiles.d/android-dev-vm.conf
   usr/lib/android-dev-vm/
     nftables/dev-egress.nft
+    proxy.env              dev's proxy variables, read by the generator and profile.d
     squid/squid.conf
     squid/allowlist.txt
   usr/libexec/android-dev-vm/
@@ -59,7 +62,7 @@ system_files/              overlay copied to / (paths below are relative to /)
   etc/xdg/kioslaverc
   etc/claude-code/managed-settings.json
   etc/security/pwquality.conf.d/50-android-dev-vm.conf    enforce_for_root
-.pre-commit-config.yaml    hadolint, shellcheck, actionlint, nft-check, squid -k parse, file hygiene
+.pre-commit-config.yaml    hadolint, shellcheck, actionlint, file hygiene
 disk/config.toml           bootc-image-builder config (root size)
 disk/build-qcow2.sh        builds the qcow2 (pinned bootc-image-builder), root and CI only
 tests/lib.sh               check/indent/finish helpers shared by image and VM checks
@@ -83,8 +86,13 @@ README.md                  for the people running the VM
 ### Network containment
 
 - **The rule.** `table inet dev_egress` has an `output` hook chain. It accepts
-  traffic on `oif "lo"`, and rejects everything else whose socket owner is
-  UID 1500. This covers IPv4, IPv6, TCP, UDP and ICMP.
+  traffic on `oif "lo"`, and stops everything else whose socket owner is
+  UID 1500. This covers IPv4, IPv6, TCP, UDP, ICMP and raw sockets.
+  - TCP gets a reset, so `connect()` fails at once with "Connection refused".
+    A dropped SYN only fails `connect()` after the kernel's retries time out,
+    and programs would hang for minutes.
+  - Everything else is dropped. UDP sends then fail at once with EPERM.
+  - Squid runs as `squid`, so its own connections aren't matched.
 - **Coexisting with firewalld.** The rule lives in its own table and is keyed
   on the numeric UID. A drop in any base chain is final, so firewalld can't
   re-allow dev's traffic. `nftables.service` stays disabled.
@@ -93,17 +101,33 @@ README.md                  for the people running the VM
   - `systemd-user-sessions.service` gets `Requires=` and `After=` on that
     service.
   - If the table fails to load, `/run/nologin` stays in place and no non-root
-    user can log in.
+    user can log in. pam_nologin is in the `account` stack of plasmalogin,
+    `login` and `sshd`, which the image checks assert.
+  - Stopping the unit leaves the rule loaded, but stops
+    `systemd-user-sessions.service` too, which puts `/run/nologin` back.
+  - Checked in a VM with the unit masked: no table, `systemd-user-sessions`
+    never starts, and dev's SSH login gets pam_nologin's message. The system
+    still reports `running`, because a dependency failure marks no unit as
+    failed. admin is locked out too, so the way back is the previous
+    deployment in the boot menu.
+  - Both units are enabled by symlinks in `/usr`, like the first-boot unit.
 - **Squid:**
   - Listens on `http_port 127.0.0.1:3128`.
   - `acl allowed dstdomain -n "/usr/lib/android-dev-vm/squid/allowlist.txt"`.
     The `-n` flag skips reverse DNS on IP-literal requests, which an attacker's
     PTR record could otherwise match.
-  - CONNECT is allowed only to port 443, then `http_access deny all`, and the
-    cache manager is off.
+  - CONNECT is allowed only to port 443, plain HTTP only to port 80, then
+    `http_access deny all`, which also closes the cache manager.
+  - Nothing is cached, and `forwarded_for delete` keeps the client address
+    out of requests.
+  - A `squid.service` drop-in replaces `ExecStart` to use our config, because
+    Fedora's unit takes the path from `/etc/sysconfig/squid`.
+  - The image checks run `squid -k parse` in the image and fail on any
+    warning, since Squid only warns about ignored lines.
 - **Squid logging.**
   - The access log is `/var/log/squid/access.log`.
-  - A tmpfiles.d ACL makes it readable by `dev`, so Claude can see which
+  - A tmpfiles.d ACL on `/var/log/squid`, with a default entry for files
+    Squid creates later, makes it readable by `dev`, so Claude can see which
     domains were denied.
   - `android-dev-denied` summarises them.
 - **Starting allowlist:**
@@ -193,9 +217,11 @@ README.md                  for the people running the VM
   Remaining channels are listed in [Open questions](#open-questions).
 - **Privileged files.** `tests/image/privileged-files.txt` lists the reviewed
   setuid/setgid files and file capabilities, and the image checks fail on any
-  difference. Several have `cap_net_raw` or `cap_net_admin` (`arping`,
-  `mtr-packet`, `gst-ptp-helper`). Their sockets are still owned by dev, and
-  the VM test covers raw and ICMP traffic.
+  difference. Several have `cap_net_raw` (`arping`, `mtr-packet`). Their
+  sockets are still owned by dev, and the VM test covers ICMP traffic.
+  `gst-ptp-helper` also had `cap_net_admin`, which is enough to delete the
+  nftables rule, so `50-caps.sh` removes its capabilities (the PTP clock is
+  unused here).
 - **Emulator access.** Fedora's udev rules make `/dev/kvm` mode 0666, so `dev`
   needs no `kvm` membership (the image checks assert the rule). Membership
   would also be a trap: Kinoite keeps `kvm` only in `/usr/lib/group`
@@ -271,14 +297,20 @@ separate so you can commit them on their own and push them from the host.
      real VM from the start.
 4. **Network containment.** nftables table plus the fail-closed unit, Squid
    config, allowlist, log access and helper, proxy environment for `dev`,
-   `docs/security-model.md`, and `nft-check` and `squid -k parse` pre-commit
-   hooks. Its VM assertions go into `tests/vm/checks.sh`.
+   `docs/security-model.md`. The nft rule and Squid config are validated in
+   the image checks, with the image's own versions, instead of pre-commit
+   hooks (`nft -c` needs `CAP_NET_ADMIN`, which the lint container lacks).
+   Its VM assertions go into `tests/vm/checks.sh`. Package installs moved to
+   their own layer ahead of `system_files/`.
 5. **Android tooling.** Android Studio (sha256-verified, desktop entry, proxy
    seeding, platform updater disabled), JDK 21, build tools.
    Also remove `vpnc` and `open-vm-tools-desktop`: nothing needs them in a
    QEMU VM, and they bring the setuid `userhelper` and
    `vmware-user-suid-wrapper`.
-6. **Claude Code.** dnf repo with a GPG fingerprint check, managed settings,
+   Check whether Firefox honours dev's proxy (its "system" setting on KDE),
+   or set it through a policy.
+6. **Claude Code.** dnf repo with a GPG fingerprint check, installed from
+   `packages.sh` so every package shares one layer, managed settings,
    bubblewrap and socat for its optional sandbox.
 7. **Updates and publishing.**
    - Stage-only drop-in.
@@ -298,14 +330,14 @@ separate so you can commit them on their own and push them from the host.
 
 | Layer | Where | What |
 |---|---|---|
-| Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, `nft-check`, `squid -k parse`, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. `nft-check` and `squid -k parse` also run inside the built image, so they match its package versions. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, and `su` is wheel-only. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Later: `desktop-file-validate`, Android Studio present, `claude --version`, no `--apply` in the update unit. |
+| Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, and `su` is wheel-only. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries, the rule and Squid are enabled from `/usr`, user sessions require the rule, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Later: `desktop-file-validate`, Android Studio present, `claude --version`, no `--apply` in the update unit. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | documented in README | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
 VM test assertions (`tests/vm/checks.sh`):
 
-- **Now (accounts and privilege).**
+- **Accounts and privilege.**
   - Boot finishes with no failed units, SELinux is enforcing, the `kargs.d`
     console arguments are applied, and bootc tracks the GHCR image.
   - `android-dev-firstboot.service` ran and succeeded, sysusers created the
@@ -317,23 +349,32 @@ VM test assertions (`tests/vm/checks.sh`):
   - `/dev/kvm` is mode 0666 and dev isn't refused when opening it. Without
     nested virtualization the node still exists (udev `static_node`) but the
     open fails with a different error, which the check accepts.
-- **With network containment.**
+- **Network containment.**
+  - The rule is loaded and survives `firewall-cmd --reload`.
   - Control: root can connect directly, which proves the negative checks
     below actually test something.
-  - dev through the proxy: `https://dl.google.com` and
-    `https://api.anthropic.com` succeed, and `https://example.com` gets a 403
-    that the access log shows as `TCP_DENIED`.
-  - dev directly: blocked for TCP 443 over IPv4 and IPv6, UDP 53 to a public
-    resolver, and ICMP.
-  - dev's login environment has the proxy variables and `JAVA_TOOL_OPTIONS`.
+  - dev directly: TCP over IPv4 and IPv6, UDP 53 to a public resolver, and
+    ICMP all fail without hanging, and the rule's counters go up. The
+    counters show it was the rule and not a missing route (CI has no IPv6
+    upstream, so there's no IPv6 control).
+  - dev through the proxy, with a clean login environment (profile.d):
+    `https://dl.google.com` and `https://api.anthropic.com` get CONNECT 200,
+    and `https://example.com` gets 403, which `android-dev-denied` lists.
+  - dev's systemd --user environment has the proxy variables and
+    `JAVA_TOOL_OPTIONS`, parsed whole from the generator.
 - **With updates.** The stage-only drop-in is in effect.
 
 The test harness reaches the guest over SSH without shipping any test users or
 keys in the image:
 
 - `run-vm.sh` generates a key for each run.
-- It passes `ssh.authorized_keys.root` and `ssh.listen` as SMBIOS type-11 system
-  credentials, which systemd-ssh-generator (systemd ≥ 256) picks up.
+- It passes SMBIOS type-11 system credentials: `ssh.listen`, which
+  systemd-ssh-generator (systemd ≥ 256) picks up, and `tmpfiles.extra`, which
+  writes the key to `/var/roothome/.ssh/authorized_keys`.
+  - `ssh.authorized_keys.root` doesn't work on bootc: tmpfiles writes it
+    through the `/root` symlink before `/var/roothome` exists.
+  - `ssh.ephemeral-authorized_keys-all` is refused by SELinux
+    (`sshd-session` may not read `/run/credentials`).
 - The connection goes through a qemu user-net port forward. The VM boots with
   UEFI (OVMF) from a throwaway overlay, so the qcow2 stays untouched.
 - First-boot prompts are skipped with credentials too: `firstboot.locale`,

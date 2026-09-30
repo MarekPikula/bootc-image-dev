@@ -1,0 +1,7 @@
+# KDE apps (KIO) take their proxy from the environment, which is set for dev
+# only. Other users have no proxy variables and connect directly.
+[Proxy Settings]
+ProxyType=4
+httpProxy=http_proxy
+httpsProxy=https_proxy
+NoProxyFor=no_proxy

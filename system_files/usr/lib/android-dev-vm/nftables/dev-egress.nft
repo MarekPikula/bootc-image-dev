@@ -1,0 +1,19 @@
+#!/usr/sbin/nft -f
+# dev (UID 1500) may send packets only over loopback, where Squid listens.
+# This is the enforcement, the proxy variables are a convenience. Loaded by
+# dev-egress-firewall.service. PLAN.md explains the design.
+
+# Replaced in one transaction when reloaded.
+destroy table inet dev_egress
+
+table inet dev_egress {
+	chain output {
+		type filter hook output priority filter; policy accept;
+		meta skuid 1500 oif "lo" accept
+		# A reset makes connect() fail at once. A dropped SYN would be retried
+		# until the connection times out.
+		meta skuid 1500 meta l4proto tcp counter reject with tcp reset
+		# Everything else is dropped (a UDP send fails with EPERM).
+		meta skuid 1500 counter drop
+	}
+}

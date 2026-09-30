@@ -141,9 +141,15 @@ check "setuid/setgid files and capabilities match tests/image/privileged-files.t
   expect_privileged_files
 
 # Units.
-check "first-boot password unit is pulled in from /usr" in_image <<'EOF'
-link=/usr/lib/systemd/system/multi-user.target.wants/android-dev-firstboot.service
-[[ "$(readlink "$link")" == ../android-dev-firstboot.service ]]
+check "our units are pulled in from /usr" in_image <<'EOF'
+bad=0
+for link in multi-user.target.wants/android-dev-firstboot.service \
+  sysinit.target.wants/dev-egress-firewall.service \
+  multi-user.target.wants/squid.service; do
+  [[ "$(readlink "/usr/lib/systemd/system/$link")" == "../${link#*/}" ]] ||
+    { echo "      missing: $link"; bad=1; }
+done
+exit "$bad"
 EOF
 # Under /usr/lib it would be lib_t and run as init_t, which may not run passwd.
 check "first-boot script is labelled bin_t (SELinux)" in_image <<'EOF'
@@ -174,6 +180,51 @@ for unit in plasma-setup.service avahi-daemon.service avahi-daemon.socket \
   state="$(systemctl is-enabled "$unit" 2>&1 || true)"
   [[ $state == masked ]] || { echo "      $unit: $state"; bad=1; }
 done
+exit "$bad"
+EOF
+
+# Network containment (CLAUDE.md): dev reaches the network only through Squid.
+# nft -c needs CAP_NET_ADMIN. --network=none keeps it inside an empty netns.
+check "egress rule parses (the image's nft)" \
+  podman run --rm --network=none --cap-add NET_ADMIN "$image" \
+  nft -c -f /usr/lib/android-dev-vm/nftables/dev-egress.nft
+check "fail closed: user sessions require the egress rule" in_image <<'EOF'
+config="$(systemctl cat systemd-user-sessions.service)"
+grep -qx 'Requires=dev-egress-firewall.service' <<<"$config"
+grep -qx 'After=dev-egress-firewall.service' <<<"$config"
+EOF
+# Without the rule, /run/nologin stays. It only helps where PAM checks it.
+check "fail closed: pam_nologin guards plasmalogin, login and sshd" in_image <<'EOF'
+bad=0
+for stack in /usr/lib/pam.d/plasmalogin /etc/pam.d/login /etc/pam.d/sshd; do
+  grep -qE '^account\s+required\s+pam_nologin\.so' "$stack" ||
+    { echo "      no pam_nologin: $stack"; bad=1; }
+done
+exit "$bad"
+EOF
+# squid -k parse exits 0 on warnings, and a warning can mean a directive or an
+# ACL entry was ignored.
+check "Squid config parses without warnings (the image's squid)" in_image <<'EOF'
+out="$(squid -k parse -f /usr/lib/android-dev-vm/squid/squid.conf 2>&1)"
+! grep -E 'WARNING|ERROR|FATAL' <<<"$out" | sed 's/^/      /' | grep .
+EOF
+check "allowlist has no .google.com, .googleapis.com or storage.googleapis.com" in_image <<'EOF'
+! grep -nxE '\.google\.com|\.googleapis\.com|storage\.googleapis\.com' \
+  /usr/lib/android-dev-vm/squid/allowlist.txt | sed 's/^/      /' | grep .
+EOF
+check "proxy settings: dev gets them, admin doesn't" in_image <<'EOF'
+env_of() {
+  setpriv --reuid="$1" --regid="$1" --init-groups env -i HOME=/ bash -c "$2"
+}
+generator=/usr/lib/systemd/user-environment-generators/60-dev-proxy
+login_proxy='bash -lc "echo \$https_proxy"'
+bad=0
+env_of dev "$generator" | grep -qx 'https_proxy=http://127.0.0.1:3128' ||
+  { echo "      generator: nothing for dev"; bad=1; }
+[[ -z "$(env_of admin "$generator")" ]] || { echo "      generator: output for admin"; bad=1; }
+[[ "$(env_of dev "$login_proxy")" == http://127.0.0.1:3128 ]] ||
+  { echo "      profile.d: nothing for dev"; bad=1; }
+[[ -z "$(env_of admin "$login_proxy")" ]] || { echo "      profile.d: proxy for admin"; bad=1; }
 exit "$bad"
 EOF
 

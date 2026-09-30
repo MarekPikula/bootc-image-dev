@@ -1,0 +1,5 @@
+#!/usr/bin/bash
+# Proxy settings for dev's systemd --user manager, and so for the Plasma
+# session and every app started from it. Other users get nothing.
+[[ $UID == 1500 ]] || exit 0
+exec cat /usr/lib/android-dev-vm/proxy.env

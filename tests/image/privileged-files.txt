@@ -31,7 +31,6 @@ caps /usr/bin/kwin_wayland cap_sys_nice=ep
 caps /usr/bin/mtr-packet cap_net_raw=ep
 caps /usr/bin/newgidmap cap_setgid=ep
 caps /usr/bin/newuidmap cap_setuid=ep
-caps /usr/libexec/gstreamer-1.0/gst-ptp-helper cap_net_bind_service,cap_net_admin,cap_sys_nice=ep
 caps /usr/libexec/ksysguard/ksgrd_network_helper cap_net_raw=ep
 caps /usr/libexec/ksystemstats_intel_helper cap_perfmon=ep
 caps /usr/libexec/sssd/krb5_child cap_dac_read_search,cap_setgid,cap_setuid=p

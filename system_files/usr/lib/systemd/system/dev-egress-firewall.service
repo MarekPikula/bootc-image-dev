@@ -1,0 +1,14 @@
+# Pulled in by a sysinit.target.wants symlink in /usr (build_files/
+# 40-services.sh). systemd-user-sessions.service requires it, see that drop-in
+# for how this fails closed.
+[Unit]
+Description=Restrict dev's network access to loopback
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /usr/lib/android-dev-vm/nftables/dev-egress.nft

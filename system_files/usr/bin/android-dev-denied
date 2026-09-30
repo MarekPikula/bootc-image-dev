@@ -1,0 +1,19 @@
+#!/usr/bin/bash
+# Lists the domains Squid refused recently, most frequent first. A domain a
+# download needs goes into squid/allowlist.txt through a PR.
+#
+# Usage: android-dev-denied [LINES]
+# Scans the last LINES lines of Squid's access log (default 5000).
+set -euo pipefail
+
+lines=${1:-5000}
+# Native log format: time elapsed client result/status bytes method URL ...
+# The URL is host:port for CONNECT and scheme://host/... otherwise.
+tail -n "$lines" /var/log/squid/access.log |
+  awk '$4 ~ /^TCP_DENIED\// {
+    host = $7
+    sub(/^[a-z]+:\/\//, "", host)
+    sub(/[:\/].*/, "", host)
+    print host
+  }' |
+  sort | uniq -c | sort -rn

@@ -1,0 +1,27 @@
+# Domains dev may reach through Squid, one per line. A leading dot matches the
+# domain and its subdomains: .gradle.org is gradle.org and *.gradle.org.
+#
+# Keep entries narrow: never .google.com or storage.googleapis.com (the image
+# checks enforce that). Every change goes through a PR.
+# android-dev-denied (in the VM) lists what Squid refused.
+
+# Claude Code
+.anthropic.com
+.claude.ai
+.claude.com
+
+# Android SDK and Google's Maven repository
+dl.google.com
+dl-ssl.google.com
+maven.google.com
+
+# Gradle (services.gradle.org redirects distributions to GitHub)
+.gradle.org
+
+# Maven Central
+repo.maven.apache.org
+repo1.maven.org
+
+# GitHub
+github.com
+.githubusercontent.com
