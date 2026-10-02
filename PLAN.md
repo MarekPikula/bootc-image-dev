@@ -53,6 +53,7 @@ system_files/              overlay copied to / (paths below are relative to /)
     multi-user.target.wants/android-dev-firstboot.service   image-owned enablement
     systemd-sysusers.service.d/50-android-dev-vm.conf       imports admin/dev password credentials
   usr/lib/bootc/kargs.d/10-console.toml   serial console too, for headless logs
+  usr/lib/bootc/install/50-android-dev-vm.toml   bootc install defaults (btrfs root)
   usr/lib/systemd/user-environment-generators/60-dev-proxy
   usr/share/polkit-1/rules.d/00-android-dev.rules
   usr/share/applications/android-studio.desktop
@@ -63,8 +64,7 @@ system_files/              overlay copied to / (paths below are relative to /)
   etc/claude-code/managed-settings.json
   etc/security/pwquality.conf.d/50-android-dev-vm.conf    enforce_for_root
 .pre-commit-config.yaml    hadolint, shellcheck, actionlint, file hygiene
-disk/config.toml           bootc-image-builder config (root size)
-disk/build-qcow2.sh        builds the qcow2 (pinned bootc-image-builder), root and CI only
+disk/build-qcow2.sh        builds the qcow2 (bootc install to-disk, from the image itself), root and CI only
 tests/lib.sh               check/indent/finish helpers shared by image and VM checks
 tests/image/checks.sh      assertions run inside the built image with podman (no VM)
 tests/image/polkit.sh      runs polkitd in the image and checks dev against every registered action
@@ -272,18 +272,21 @@ README.md                  for the people running the VM
   - That job pushes with skopeo and checks that the pushed config digest equals
     the tested one.
   - Tags: `stable` (what VMs track), `44.<yyyymmdd>`, `sha-<git>`.
-- **qcow2.** `disk/build-qcow2.sh` runs
-  `quay.io/centos-bootc/bootc-image-builder` (pinned by digest in the script)
-  with `sudo podman run --privileged` against rootful storage, using
-  `disk/config.toml` (64 GiB root, btrfs because Kinoite names no default).
-  - The installed system tracks the image name it was built from, and the
-    builder has no separate target ref. CI therefore tags the image
-    `ghcr.io/marekpikula/bootc-image-dev:stable` first, so a downloaded qcow2
-    updates from GHCR once publishing exists.
-  - The bootc-image-builder repo is archived (merged into osbuild/image-builder),
-    but the container is still the documented tool.
-  - We don't use the thin GitHub Action, so there's one less third-party action
-    in the pipeline.
+- **qcow2.** `disk/build-qcow2.sh` runs the image itself in
+  `sudo podman run --privileged` against rootful storage, and its bootc
+  installs it into a sparse 64 GiB raw file
+  (`bootc install to-disk --via-loopback --generic-image`, every bootloader
+  for BIOS and UEFI). One `qemu-img convert` then makes the zstd-compressed
+  qcow2.
+  - The root filesystem is btrfs, because Kinoite names no default. The image
+    sets it in `/usr/lib/bootc/install/50-android-dev-vm.toml`, so every
+    install path uses it.
+  - `--target-imgref` sets what the installed system tracks for updates. CI
+    tags the image `ghcr.io/marekpikula/bootc-image-dev:stable` and builds
+    from that name, so a downloaded qcow2 updates from GHCR once publishing
+    exists.
+  - It replaced bootc-image-builder (archived): the same bootc install, about
+    3 minutes faster, and one less pinned third-party image.
   - The qcow2 is uploaded as an artifact.
 - **Pinning.** Third-party actions are pinned by commit SHA.
 
@@ -481,8 +484,8 @@ starting from plain Kinoite.
 
 - bootc: <https://bootc.dev/bootc/> (users and groups, filesystem, upgrades,
   `bootc container lint`, `bootc rollback`)
-- bootc-image-builder: <https://github.com/osbuild/bootc-image-builder>
-  (archived), <https://github.com/osbuild/image-builder>
+- bootc install to-disk, `--via-loopback`:
+  <https://bootc.dev/bootc/bootc-installation.7.html>
 - containers-policy.json(5):
   <https://github.com/containers/image/blob/main/docs/containers-policy.json.5.md>
 - cosign bundle-format issue: <https://github.com/projectbluefin/common/issues/977>

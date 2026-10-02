@@ -254,4 +254,11 @@ env_of dev "$generator" | grep -qx 'https_proxy=http://127.0.0.1:3128' ||
 exit "$bad"
 EOF
 
+# disk/build-qcow2.sh passes no --filesystem: Kinoite names no default, so the
+# image's install config has to.
+check "bootc installs to a btrfs root" in_image <<'EOF'
+type="$(bootc install print-configuration | jq -r '."root-fs-type"')"
+[[ $type == btrfs ]] || { echo "      root-fs-type: $type"; exit 1; }
+EOF
+
 finish "image checks"

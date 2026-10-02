@@ -67,8 +67,8 @@ questions. Read it before starting work, and update it when a decision changes.
   the domain and why it's needed. Never work around the firewall.
 - `.devcontainer/` is read-only. Suggest changes and the user applies them from
   the host.
-- bootc-image-builder needs privileges this container doesn't have, so qcow2
-  images come from CI (`disk/build-qcow2.sh`). Download one with
+- Building a qcow2 (`disk/build-qcow2.sh`) needs privileges and loop devices
+  this container doesn't have, so qcow2 images come from CI. Download one with
   `gh run download <run> -n android-dev-vm-qcow2` and boot it here with
   `tests/vm/run-vm.sh`, which also runs the VM checks.
 - systemd can't boot as PID 1 in a container here, and `/proc` in nested

@@ -1,0 +1,5 @@
+# bootc install defaults (bootc-install-config(5)), for every install path:
+# disk/build-qcow2.sh, or a manual bootc install. Kinoite names no default
+# root filesystem. btrfs, as Fedora's atomic desktops use.
+[install.filesystem.root]
+type = "btrfs"
