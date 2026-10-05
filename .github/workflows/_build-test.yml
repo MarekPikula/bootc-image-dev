@@ -2,7 +2,7 @@ name: Build and test
 
 # Reusable: pr.yml calls it now, publish.yml will too. Builds the image, checks
 # it, turns it into a qcow2 and boots that in a VM. All in one job, so the
-# 3.8 GB qcow2 never has to go through artifact storage between jobs.
+# multi-GB qcow2 never has to go through artifact storage between jobs.
 on:
   workflow_call:
 
@@ -67,7 +67,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # Rootful: bootc-image-builder reads rootful storage.
+      # Rootful: disk/build-qcow2.sh runs the image from rootful storage.
       - name: Build image
         run: sudo podman build --build-arg-file versions.env -t "$IMAGE" .
 
