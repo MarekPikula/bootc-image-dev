@@ -23,14 +23,15 @@ constraints that don't change.
 ## Repository layout
 
 ```
-Containerfile              FROM kinoite:44; RUN packages.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint
-versions.env               build inputs: base image tag, Android Studio version + sha256
+Containerfile              FROM kinoite:44; RUN packages.sh; RUN android-studio.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint
+versions.env               build inputs: base image tag, Android Studio URL + sha256
 build_files/
   packages.sh              every package install, in one layer before COPY system_files/
-                           (see the Containerfile): squid, later JDK 21, Claude Code, ...
+                           (see the Containerfile): squid, JDK 25, git, later Claude Code, ...
+  android-studio.sh        download, sha256 check, unpack to /usr/lib/android-studio, updates
+                           off. Its own RUN, see the Containerfile
   build.sh                 runs the numbered steps in order
   15-su.sh                 su for wheel only (pam_wheel requisite)
-  20-android-studio.sh     download, sha256 check, unpack to /usr/lib/android-studio
   30-claude-code.sh        managed settings (the RPM itself is installed by packages.sh)
   40-services.sh           enable (symlinks in /usr) and mask units
   50-caps.sh               drops file capabilities that could undo the network rule
@@ -57,7 +58,7 @@ system_files/              overlay copied to / (paths below are relative to /)
   usr/lib/systemd/user-environment-generators/60-dev-proxy
   usr/share/polkit-1/rules.d/00-android-dev.rules
   usr/share/applications/android-studio.desktop
-  usr/bin/android-studio             wrapper: seeds IDE proxy settings, then execs studio
+  usr/bin/android-studio             symlink to /usr/lib/android-studio/bin/studio
   usr/bin/android-dev-denied         lists recent TCP_DENIED domains from the Squid log
   etc/profile.d/dev-proxy.sh
   etc/xdg/kioslaverc
@@ -158,8 +159,8 @@ README.md                  for the people running the VM
 | Gradle daemon and other JVMs | `JAVA_TOOL_OPTIONS` with `-Dhttp(s).proxyHost/Port` and `-Dhttp.nonProxyHosts`. |
 | Claude Code | The `env` block in managed settings. This also covers background agents, which don't inherit the login shell. |
 | KDE apps | `/etc/xdg/kioslaverc` with `ProxyType=4` (take the proxy from the environment). |
-| Android Studio | The wrapper seeds `options/proxy.settings.xml` in the versioned config dir when it's missing, with `STUDIO_VM_OPTIONS` as a fallback. |
-| sdkmanager | Uses the proxy from Studio. On the command line, pass `--proxy=http --proxy_host=127.0.0.1 --proxy_port=3128`. |
+| Android Studio | Nothing extra: its runtime picks up `JAVA_TOOL_OPTIONS`, and its IDE settings default to auto-detect (the VM test checks it). |
+| sdkmanager | Uses the proxy from Studio. On the command line it's a JVM too, so probably `JAVA_TOOL_OPTIONS` (not checked). Otherwise pass `--proxy=http --proxy_host=127.0.0.1 --proxy_port=3128`. |
 
 ### Privilege
 
@@ -220,8 +221,8 @@ README.md                  for the people running the VM
   admin prompts (`CHALLENGE`) for rpm-ostree, firewalld and more.
 - **Root-side services dev could drive.** avahi, cups/cups-browsed and geoclue
   are masked. NetworkManager, the flatpak system helper and rpm-ostree are
-  covered by the polkit rule. `userhelper` (usermode) asks for root's
-  password for its console apps (`vpnc`, `config-util`), and root is locked.
+  covered by the polkit rule. `usermode` (the setuid `userhelper`, which asks
+  for root's password) is removed.
   Remaining channels are listed in [Open questions](#open-questions).
 - **Privileged files.** `tests/image/privileged-files.txt` lists the reviewed
   setuid/setgid files and file capabilities, and the image checks fail on any
@@ -318,18 +319,21 @@ separate so you can commit them on their own and push them from the host.
    hooks (`nft -c` needs `CAP_NET_ADMIN`, which the lint container lacks).
    Its VM assertions go into `tests/vm/checks.sh`. Package installs moved to
    their own layer ahead of `system_files/`.
-5. **Android tooling.** Android Studio (sha256-verified, desktop entry, proxy
-   seeding, platform updater disabled), JDK 21, build tools.
-   Also remove `vpnc` and `open-vm-tools-desktop`: nothing needs them in a
-   QEMU VM, and they bring the setuid `userhelper` and
+5. **Android tooling.** Android Studio (sha256-verified, desktop entry,
+   platform updater disabled), JDK 25 (Fedora 44 has no older one, and
+   Studio's runtime is 25 too), git.
+   Also remove `vpnc`, `usermode` and `open-vm-tools-desktop`: nothing needs
+   them in a QEMU VM, and they bring the setuid `userhelper` and
    `vmware-user-suid-wrapper`.
-   Check whether Firefox honours dev's proxy (its "system" setting on KDE),
-   or set it through a policy.
 6. **Claude Code.** dnf repo with a GPG fingerprint check, installed from
    `packages.sh` so every package shares one layer, managed settings,
    bubblewrap and socat for its optional sandbox.
 7. **Updates and publishing.**
    - Stage-only drop-in.
+   - A reproducible Android Studio layer, so a `bootc upgrade` doesn't fetch
+     Studio again (about 1.5 GB) when only the base changed: unpack it in its
+     own stage, `COPY --from` it, and build with `--timestamp` so the layer's
+     digest stays the same. Check with two builds.
    - ⚙ `publish.yml` with the `release`-bound publish job.
    - You create the `release` Environment first.
 8. **Docs.**
@@ -347,7 +351,7 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, and `su` is wheel-only. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries, the rule and Squid are enabled from `/usr`, user sessions require the rule, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Later: `desktop-file-validate`, Android Studio present, `claude --version`, no `--apply` in the update unit. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, and `su` is wheel-only. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries, the rule and Squid are enabled from `/usr`, user sessions require the rule, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Later: `claude --version`, no `--apply` in the update unit. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | documented in README | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
@@ -378,6 +382,11 @@ VM test assertions (`tests/vm/checks.sh`):
     and `https://example.com` gets 403, which `android-dev-denied` lists.
   - dev's systemd --user environment has the proxy variables and
     `JAVA_TOOL_OPTIONS`, parsed whole from the generator.
+- **Android tooling.**
+  - Command-line Java as dev gets `dl.google.com` through Squid.
+  - Android Studio, started as dev in a headless KWin
+    (`kwin_wayland --virtual`), fetches the SDK lists through Squid and makes
+    no direct connection attempt. The test VM has 6 GiB for it.
 - **With updates.** The stage-only drop-in is in effect.
 
 The test harness reaches the guest over SSH without shipping any test users or
@@ -436,6 +445,29 @@ Each question has a recommendation.
    - *Recommendation:* keep `packages: write` confined to the `release` job,
      protect `main` with a ruleset, and do signing next.
 6. **UIDs.** 1000 for `admin` and 1500 for `dev`, unless you'd prefer others.
+7. **Hosts Android Studio asks for that Squid refuses.** On first start:
+   - `plugins.jetbrains.com`: the plugin marketplace (installing and updating
+     plugins, the list of broken plugins).
+   - `edgedl.me.gvt1.com`: a general Google download CDN, for an index of
+     Studio's documentation.
+   - `play.google.com`: a plain-HTTP connectivity check.
+   - *Recommendation:* add `plugins.jetbrains.com` only if you want plugins.
+     Leave the other two out: the CDN serves far more than Studio's index,
+     and plain HTTP is refused anyway.
+8. **Gradle toolchains.** Projects that ask for a JDK other than 25 make
+   Gradle download one (foojay.io, Adoptium on GitHub), which the allowlist
+   doesn't cover.
+   - *Recommendation:* wait for a project that needs it, then either add the
+     JDK it needs to the image or allowlist the narrowest download host.
+9. **Firefox's background services.** Checked in a VM: Firefox's default
+   "system proxy" setting picks up dev's variables, and pages on allowlisted
+   hosts load through Squid. Squid refuses Mozilla's services (updates,
+   remote settings, add-ons, location), and Firefox then falls back to
+   direct connections (`network.proxy.failover_direct`), which the rule
+   resets at once. Nothing gets out, but each one is a refusal.
+   - *Recommendation:* leave it. A policy in
+     `/usr/lib64/firefox/distribution/` could switch those services off if
+     the refusals become a nuisance in `android-dev-denied`.
 
 ## Reference
 

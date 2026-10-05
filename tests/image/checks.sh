@@ -254,6 +254,27 @@ env_of dev "$generator" | grep -qx 'https_proxy=http://127.0.0.1:3128' ||
 exit "$bad"
 EOF
 
+# Android tooling.
+check "Android Studio: launcher, desktop entry, platform updates off" in_image <<'EOF'
+[[ "$(readlink -f /usr/bin/android-studio)" == /usr/lib/android-studio/bin/studio ]]
+[[ -x /usr/lib/android-studio/bin/studio ]]
+desktop-file-validate /usr/share/applications/android-studio.desktop
+grep -qx 'ide.no.platform.update=true' /usr/lib/android-studio/bin/idea.properties
+EOF
+# The tarball ships no desktop entry, so ours copies these from its
+# product-info.json, and a Studio update could change them.
+check "Android Studio: desktop entry matches product-info.json" in_image <<'EOF'
+info=/usr/lib/android-studio/product-info.json
+entry=/usr/share/applications/android-studio.desktop
+wm_class="$(jq -r '.launch[] | select(.os == "Linux") | .startupWmClass' "$info")"
+icon="/usr/lib/android-studio/$(jq -r .svgIconPath "$info")"
+grep -qx "StartupWMClass=$wm_class" "$entry" || { echo "      StartupWMClass should be $wm_class"; exit 1; }
+grep -qx "Icon=$icon" "$entry" || { echo "      Icon should be $icon"; exit 1; }
+EOF
+check "JDK 25 for command-line Gradle" in_image <<'EOF'
+javac -version 2>&1 | grep -q '^javac 25\.'
+EOF
+
 # disk/build-qcow2.sh passes no --filesystem: Kinoite names no default, so the
 # image's install config has to.
 check "bootc installs to a btrfs root" in_image <<'EOF'

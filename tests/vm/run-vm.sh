@@ -51,8 +51,9 @@ cred() {
     "$1" "$(printf '%s' "$2" | base64 -w0)"
 }
 
+# 6 GiB: the VM checks start Android Studio, which takes about 2 GiB.
 qemu-system-x86_64 \
-  -machine q35,accel=kvm -cpu host -smp 4 -m 4096 \
+  -machine q35,accel=kvm -cpu host -smp 4 -m 6144 \
   -drive "if=pflash,format=raw,readonly=on,file=$code" \
   -drive "if=pflash,format=raw,file=$work/vars.fd" \
   -drive "file=$work/disk.qcow2,if=virtio,format=qcow2" \

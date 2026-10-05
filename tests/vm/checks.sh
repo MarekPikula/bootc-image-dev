@@ -190,10 +190,15 @@ as_dev_login() {
   as_dev env -i HOME=/var/home/dev USER=dev LOGNAME=dev PATH=/usr/bin bash -lc "$1"
 }
 
+# Passes if the last line of $out is $1.
+last_line_is() {
+  [[ ${out##*$'\n'} == "$1" ]] || { echo "      rc $rc: $out"; return 1; }
+}
+
 # $1: host[:port], $2: the CONNECT status Squid must answer with.
 via_proxy() {
   as_dev_login "curl -sS -o /dev/null --max-time 30 -w '%{http_connect}' https://$1/"
-  [[ ${out##*$'\n'} == "$2" ]] || { echo "      rc $rc: $out"; return 1; }
+  last_line_is "$2"
 }
 check "dev: dl.google.com through Squid" via_proxy dl.google.com 200
 check "dev: api.anthropic.com through Squid" via_proxy api.anthropic.com 200
@@ -204,7 +209,7 @@ check "dev: ports other than 443 refused by Squid (403)" via_proxy dl.google.com
 # HTTPS only: a plain HTTP request is refused even to an allowlisted host.
 plain_http_refused() {
   as_dev_login "curl -sS -o /dev/null --max-time 30 -w '%{http_code}' http://dl.google.com/"
-  [[ ${out##*$'\n'} == 403 ]] || { echo "      rc $rc: $out"; return 1; }
+  last_line_is 403
 }
 check "dev: plain HTTP refused by Squid (403)" plain_http_refused
 
@@ -234,6 +239,49 @@ user_manager_env() {
   fi
 }
 check "dev's systemd --user environment has the proxy settings" user_manager_env
+
+# Command-line JVMs such as Gradle ignore the proxy variables and take it from
+# JAVA_TOOL_OPTIONS instead.
+java_via_proxy() {
+  cat >/tmp/Fetch.java <<'EOF'
+public class Fetch {
+  public static void main(String[] args) throws Exception {
+    var c = (java.net.HttpURLConnection) java.net.URI.create(args[0]).toURL().openConnection();
+    System.out.println(c.getResponseCode());
+  }
+}
+EOF
+  chmod 0644 /tmp/Fetch.java
+  as_dev_login 'java /tmp/Fetch.java https://dl.google.com/android/repository/repository2-3.xml'
+  last_line_is 200
+}
+check "dev: command-line Java reaches dl.google.com through Squid" java_via_proxy
+
+# CONNECT requests Squid tunnelled to $1.
+squid_tunnels() {
+  awk -v host="$1" '$4 == "TCP_TUNNEL/200" && $7 == host' /var/log/squid/access.log | wc -l
+}
+
+# Android Studio, with dev's session environment, in a headless KWin. On first
+# start it fetches the SDK lists from dl.google.com: that must go through Squid
+# (Studio takes the proxy from JAVA_TOOL_OPTIONS), with no direct attempt.
+studio_uses_proxy() {
+  local tunnels stopped _ ok=1
+  tunnels="$(squid_tunnels dl.google.com:443)"
+  stopped="$(dev_stopped_packets)"
+  systemctl start user@1500.service
+  systemd-run -M dev@ --user --unit=studio-check --collect --quiet \
+    kwin_wayland --virtual --xwayland --socket=studio-check \
+    --exit-with-session=/usr/bin/android-studio
+  for _ in {1..36}; do
+    (("$(squid_tunnels dl.google.com:443)" > tunnels)) && { ok=0; break; }
+    sleep 5
+  done
+  systemctl --user -M dev@ stop studio-check.service 2>/dev/null
+  ((ok == 0)) || { echo "      no tunnel to dl.google.com within 3 minutes"; return 1; }
+  (("$(dev_stopped_packets)" == stopped)) || { echo "      Studio tried direct connections"; return 1; }
+}
+check "Android Studio starts and goes through Squid" studio_uses_proxy
 
 # Fail closed, as at boot: when the rule's unit fails, systemd-user-sessions
 # can't start and /run/nologin stays (pam_nologin then refuses everyone but
