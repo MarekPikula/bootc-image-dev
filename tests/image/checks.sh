@@ -271,6 +271,25 @@ icon="/usr/lib/android-studio/$(jq -r .svgIconPath "$info")"
 grep -qx "StartupWMClass=$wm_class" "$entry" || { echo "      StartupWMClass should be $wm_class"; exit 1; }
 grep -qx "Icon=$icon" "$entry" || { echo "      Icon should be $icon"; exit 1; }
 EOF
+# /etc/firefox/policies is where Firefox looks first, whatever Fedora's
+# per-user-policy setting says. The file itself stays image-owned in /usr. A
+# Firefox update can rename policy keys, which would switch that part of the
+# policy off silently. (Preferences entries aren't checked: Firefox ignores
+# those outside its allowed prefixes.)
+check "Firefox policy: where Firefox reads it, with keys this Firefox knows" in_image <<'EOF'
+policy=/usr/lib/android-dev-vm/firefox/policies.json
+[[ "$(readlink -f /etc/firefox/policies/policies.json)" == "$policy" ]]
+# unzip warns about omni.ja's layout, so judge the result by whether jq reads it.
+unzip -p /usr/lib64/firefox/browser/omni.ja modules/policies/policies-schema.json \
+  >/tmp/policies-schema.json 2>/dev/null || true
+unknown="$(jq -r --slurpfile schema /tmp/policies-schema.json '
+  $schema[0].properties as $known | .policies | to_entries[] | .key as $policy |
+  if $known[$policy] == null then $policy
+  elif (.value | type) == "object" and $known[$policy].properties != null then
+    ((.value | keys) - ($known[$policy].properties | keys))[] | "\($policy).\(.)"
+  else empty end' "$policy")"
+[[ -z $unknown ]] || { echo "      unknown to this Firefox:"; sed 's/^/        /' <<<"$unknown"; exit 1; }
+EOF
 check "JDK 25 for command-line Gradle" in_image <<'EOF'
 javac -version 2>&1 | grep -q '^javac 25\.'
 EOF

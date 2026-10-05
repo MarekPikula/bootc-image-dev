@@ -15,13 +15,41 @@ dl.google.com
 dl-ssl.google.com
 maven.google.com
 
+# Android Studio: Google's download CDN (large SDK downloads, the docs index),
+# documentation, and JetBrains' plugin marketplace and resources
+.gvt1.com
+developer.android.com
+plugins.jetbrains.com
+downloads.marketplace.jetbrains.com
+resources.jetbrains.com
+
 # Gradle (services.gradle.org redirects distributions to GitHub)
 .gradle.org
 
-# Maven Central
+# Maven Central, and JitPack (common in Android projects)
 repo.maven.apache.org
 repo1.maven.org
+jitpack.io
+
+# Gradle toolchains: the foojay resolver picks a JDK, which then comes from
+# GitHub (Adoptium's releases)
+api.foojay.io
 
 # GitHub
 github.com
 .githubusercontent.com
+
+# Google's static files and fonts (developer.android.com and other docs pages)
+www.gstatic.com
+fonts.googleapis.com
+fonts.gstatic.com
+
+# Firefox: certificate revocation and blocklists (remote settings), Mozilla's
+# remote configuration (Normandy, which no policy can switch off) and
+# extensions. Its other services are off (firefox/policies.json).
+firefox.settings.services.mozilla.com
+firefox-settings-attachments.cdn.mozilla.net
+content-signature-2.cdn.mozilla.net
+normandy.cdn.mozilla.net
+classify-client.services.mozilla.com
+.addons.mozilla.org

@@ -264,22 +264,36 @@ squid_tunnels() {
 
 # Android Studio, with dev's session environment, in a headless KWin. On first
 # start it fetches the SDK lists from dl.google.com: that must go through Squid
-# (Studio takes the proxy from JAVA_TOOL_OPTIONS), with no direct attempt.
+# (Studio takes the proxy from JAVA_TOOL_OPTIONS), with no direct attempt, and
+# in that first minute Squid must refuse nothing it asks for except its
+# plain-HTTP connectivity check (HTTPS only, see squid.conf).
 studio_uses_proxy() {
-  local tunnels stopped _ ok=1
+  local tunnels stopped log_lines refused _ ok=1
   tunnels="$(squid_tunnels dl.google.com:443)"
   stopped="$(dev_stopped_packets)"
+  log_lines="$(wc -l </var/log/squid/access.log)"
   systemctl start user@1500.service
   systemd-run -M dev@ --user --unit=studio-check --collect --quiet \
     kwin_wayland --virtual --xwayland --socket=studio-check \
-    --exit-with-session=/usr/bin/android-studio
+    --exit-with-session=/usr/bin/android-studio ||
+    { echo "      couldn't start Studio's unit"; return 1; }
   for _ in {1..36}; do
     (("$(squid_tunnels dl.google.com:443)" > tunnels)) && { ok=0; break; }
+    systemctl --user -M dev@ is-active --quiet studio-check.service || {
+      echo "      KWin or Studio exited early:"
+      journalctl -b _UID=1500 -n 20 --no-pager | indent
+      return 1
+    }
     sleep 5
   done
+  # Then a little longer, for the marketplace and docs requests.
+  ((ok == 0)) && sleep 30
   systemctl --user -M dev@ stop studio-check.service 2>/dev/null
   ((ok == 0)) || { echo "      no tunnel to dl.google.com within 3 minutes"; return 1; }
   (("$(dev_stopped_packets)" == stopped)) || { echo "      Studio tried direct connections"; return 1; }
+  refused="$(tail -n "+$((log_lines + 1))" /var/log/squid/access.log |
+    awk '$4 ~ /^TCP_DENIED\// && $7 !~ /^http:\/\/play\.google\.com\// { print $7 }' | sort -u)"
+  [[ -z $refused ]] || { echo "      Squid refused:"; indent <<<"$refused"; return 1; }
 }
 check "Android Studio starts and goes through Squid" studio_uses_proxy
 

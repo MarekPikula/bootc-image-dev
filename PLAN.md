@@ -3,7 +3,8 @@
 This is the roadmap for the bootc Android dev VM. CLAUDE.md lists the
 constraints that don't change.
 
-- Status: PRs 1–3 merged, PR 4 (network containment) in review.
+- Status: PRs 1–4 and the bootc-install qcow2 build merged, PR 5 (Android
+  tooling) in review.
 - Research checked against upstream docs on 2026-09-28.
 
 ## Decisions
@@ -23,7 +24,7 @@ constraints that don't change.
 ## Repository layout
 
 ```
-Containerfile              FROM kinoite:44; RUN packages.sh; RUN android-studio.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint
+Containerfile              FROM kinoite:44; RUN android-studio.sh; RUN packages.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint
 versions.env               build inputs: base image tag, Android Studio URL + sha256
 build_files/
   packages.sh              every package install, in one layer before COPY system_files/
@@ -62,6 +63,8 @@ system_files/              overlay copied to / (paths below are relative to /)
   usr/bin/android-dev-denied         lists recent TCP_DENIED domains from the Squid log
   etc/profile.d/dev-proxy.sh
   etc/xdg/kioslaverc
+  usr/lib/android-dev-vm/firefox/policies.json   Firefox policy: background services off
+  etc/firefox/policies/policies.json             symlink to it, where Firefox looks first
   etc/claude-code/managed-settings.json
   etc/security/pwquality.conf.d/50-android-dev-vm.conf    enforce_for_root
 .pre-commit-config.yaml    hadolint, shellcheck, actionlint, file hygiene
@@ -139,16 +142,43 @@ README.md                  for the people running the VM
     Squid creates later, makes it readable by `dev`, so Claude can see which
     domains were denied.
   - `android-dev-denied` summarises them.
-- **Starting allowlist:**
-  - Anthropic: `.anthropic.com`, `.claude.ai`, `.claude.com`
-  - Android: `dl.google.com`, `dl-ssl.google.com`, `maven.google.com`
-  - Gradle: `.gradle.org`
-  - Maven: `repo.maven.apache.org`, `repo1.maven.org`
-  - GitHub: `github.com`, `.githubusercontent.com`
-  - Claude Code's own updates need nothing extra, because the binary comes from
-    the image.
-  - `services.gradle.org` redirects Gradle distributions to `github.com` and
-    `release-assets.githubusercontent.com`, which the list already covers.
+- **Allowlist.** `squid/allowlist.txt` is the list, with a comment per group:
+  Claude, the Android SDK and Google's Maven repository, Android Studio
+  (Google's download CDN, developer.android.com, JetBrains' plugin
+  marketplace), Gradle and its toolchain resolver, Maven Central and JitPack,
+  GitHub, Google's static files and fonts for docs pages, and Firefox's
+  remote settings and add-ons.
+  - `.gvt1.com` is the broadest entry: Google's download CDN serves far more
+    than Android tooling, but only downloads.
+  - Claude Code's own updates need nothing extra, because the binary comes
+    from the image.
+  - Gradle distributions and toolchain JDKs come from GitHub.
+  - `resources.jetbrains.com` is there because Studio asked for it in one
+    longer run in a container, though not in the VM.
+  - A Firefox policy switches off what would only be refused: updates (they
+    come with the image), telemetry, studies, sponsored content, DNS over
+    HTTPS, DRM and codec downloads, push, location, and the new-tab page with
+    its remote content (the new tab and the home page are blank). It also
+    turns on tracking protection in all windows, which dev can change.
+    - The file is `/usr/lib/android-dev-vm/firefox/policies.json`, linked
+      from `/etc/firefox/policies/`. Firefox looks there first, whatever
+      Fedora's per-user-policy setting says, and wherever Firefox is
+      installed.
+    - Normandy (Mozilla's remote configuration) has no policy switch, so its
+      two hosts are allowed.
+    - The image checks assert that this Firefox knows every policy key.
+      `Preferences` entries aren't covered.
+    - Codec downloads being off means no OpenH264, so some H.264 video won't
+      play.
+  - Checked in a VM, each with a fresh profile and no direct attempt:
+    - Studio for 7 minutes (SDK lists, marketplace, docs index). Squid
+      refused only its plain-HTTP connectivity check (open question 7).
+    - A Gradle build that downloads a JDK 17 toolchain. Nothing refused.
+    - Firefox for 4 minutes on developer.android.com. Squid refused one
+      request to Mozilla's suggestion service (`merino.services.mozilla.com`)
+      and the page's third-party content: analytics
+      (`www.googletagmanager.com`) and Google's sign-in widget
+      (`apis.google.com`).
 
 ### Proxy configuration for dev
 
@@ -159,6 +189,7 @@ README.md                  for the people running the VM
 | Gradle daemon and other JVMs | `JAVA_TOOL_OPTIONS` with `-Dhttp(s).proxyHost/Port` and `-Dhttp.nonProxyHosts`. |
 | Claude Code | The `env` block in managed settings. This also covers background agents, which don't inherit the login shell. |
 | KDE apps | `/etc/xdg/kioslaverc` with `ProxyType=4` (take the proxy from the environment). |
+| Firefox | Nothing extra: its default "use system proxy settings" picks up the variables (checked in a VM). |
 | Android Studio | Nothing extra: its runtime picks up `JAVA_TOOL_OPTIONS`, and its IDE settings default to auto-detect (the VM test checks it). |
 | sdkmanager | Uses the proxy from Studio. On the command line it's a JVM too, so probably `JAVA_TOOL_OPTIONS` (not checked). Otherwise pass `--proxy=http --proxy_host=127.0.0.1 --proxy_port=3128`. |
 
@@ -262,8 +293,9 @@ README.md                  for the people running the VM
     `tests/vm/run-vm.sh`, and uploads the console log and journal as
     `vm-logs` and the qcow2 as `android-dev-vm-qcow2` (zstd-compressed, kept
     14 days, also when the VM test fails).
-  - The VM test runs in the build job so the 3.8 GB qcow2 doesn't go through
-    artifact storage between jobs (that took about 4.5 minutes per run).
+  - The VM test runs in the build job so the qcow2 (5.3 GB with Android
+    Studio) doesn't go through artifact storage between jobs (that took about
+    4.5 minutes per run when it was 3.8 GB).
 - **`pr.yml`** calls it as job `ci`, so the checks are `ci / lint` and
   `ci / build`. Both are required.
 - **`publish.yml`** (push to `main`, weekly, dispatch):
@@ -331,7 +363,7 @@ separate so you can commit them on their own and push them from the host.
 7. **Updates and publishing.**
    - Stage-only drop-in.
    - A reproducible Android Studio layer, so a `bootc upgrade` doesn't fetch
-     Studio again (about 1.5 GB) when only the base changed: unpack it in its
+     Studio again (about 1.6 GB) when only the base changed: unpack it in its
      own stage, `COPY --from` it, and build with `--timestamp` so the layer's
      digest stays the same. Check with two builds.
    - ⚙ `publish.yml` with the `release`-bound publish job.
@@ -385,8 +417,9 @@ VM test assertions (`tests/vm/checks.sh`):
 - **Android tooling.**
   - Command-line Java as dev gets `dl.google.com` through Squid.
   - Android Studio, started as dev in a headless KWin
-    (`kwin_wayland --virtual`), fetches the SDK lists through Squid and makes
-    no direct connection attempt. The test VM has 6 GiB for it.
+    (`kwin_wayland --virtual`), fetches the SDK lists through Squid, makes no
+    direct connection attempt, and in that first minute gets nothing refused
+    except its plain-HTTP connectivity check. The test VM has 6 GiB for it.
 - **With updates.** The stage-only drop-in is in effect.
 
 The test harness reaches the guest over SSH without shipping any test users or
@@ -445,29 +478,12 @@ Each question has a recommendation.
    - *Recommendation:* keep `packages: write` confined to the `release` job,
      protect `main` with a ruleset, and do signing next.
 6. **UIDs.** 1000 for `admin` and 1500 for `dev`, unless you'd prefer others.
-7. **Hosts Android Studio asks for that Squid refuses.** On first start:
-   - `plugins.jetbrains.com`: the plugin marketplace (installing and updating
-     plugins, the list of broken plugins).
-   - `edgedl.me.gvt1.com`: a general Google download CDN, for an index of
-     Studio's documentation.
-   - `play.google.com`: a plain-HTTP connectivity check.
-   - *Recommendation:* add `plugins.jetbrains.com` only if you want plugins.
-     Leave the other two out: the CDN serves far more than Studio's index,
-     and plain HTTP is refused anyway.
-8. **Gradle toolchains.** Projects that ask for a JDK other than 25 make
-   Gradle download one (foojay.io, Adoptium on GitHub), which the allowlist
-   doesn't cover.
-   - *Recommendation:* wait for a project that needs it, then either add the
-     JDK it needs to the image or allowlist the narrowest download host.
-9. **Firefox's background services.** Checked in a VM: Firefox's default
-   "system proxy" setting picks up dev's variables, and pages on allowlisted
-   hosts load through Squid. Squid refuses Mozilla's services (updates,
-   remote settings, add-ons, location), and Firefox then falls back to
-   direct connections (`network.proxy.failover_direct`), which the rule
-   resets at once. Nothing gets out, but each one is a refusal.
-   - *Recommendation:* leave it. A policy in
-     `/usr/lib64/firefox/distribution/` could switch those services off if
-     the refusals become a nuisance in `android-dev-denied`.
+7. **Studio's plain-HTTP connectivity check.** Android Studio sends a
+   `HEAD http://play.google.com/` at start. Squid refuses it (HTTPS only),
+   so it's the one refusal Studio leaves in `android-dev-denied`. Nothing
+   else depends on it.
+   - *Recommendation:* leave it refused. Allowing it means plain HTTP, which
+     CLAUDE.md rules out.
 
 ## Reference
 
