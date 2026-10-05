@@ -20,8 +20,6 @@
 4111 /usr/bin/sudo
 4755 /usr/bin/umount
 4755 /usr/bin/unix_chkpwd
-4711 /usr/bin/userhelper
-4755 /usr/bin/vmware-user-suid-wrapper
 4755 /usr/lib/polkit-1/polkit-agent-helper-1
 4750 /usr/libexec/dbus-1/dbus-daemon-launch-helper
 2711 /usr/libexec/utempter/utempter

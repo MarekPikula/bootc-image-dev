@@ -78,8 +78,9 @@ These are known and accepted for now. Some have a planned fix.
   zones.
 - **Allowlisted hosts that accept uploads.** `github.com`,
   `*.githubusercontent.com` and the Anthropic API can all carry data out, for
-  example as a push to any GitHub repository. Planned: narrow the GitHub
-  hosts once we know which ones builds need.
+  example as a push to any GitHub repository. So can, with an account,
+  JetBrains' plugin marketplace and addons.mozilla.org. Planned: narrow the
+  GitHub hosts once we know which ones builds need.
 - **Domain fronting.** Squid checks only the name in the CONNECT request,
   not the TLS server name or `Host` header inside the tunnel. A shared front
   end behind an allowlisted name (Google's for `dl.google.com`, the GitHub

@@ -1,0 +1,94 @@
+{
+  "policies": {
+    "CaptivePortal": false,
+    "DNSOverHTTPS": {
+      "Enabled": false,
+      "Locked": true
+    },
+    "DisableAppUpdate": true,
+    "DisableFirefoxStudies": true,
+    "DisableSystemAddonUpdate": true,
+    "DisableTelemetry": true,
+    "EnableTrackingProtection": {
+      "Value": true,
+      "Locked": false,
+      "Cryptomining": true,
+      "Fingerprinting": true
+    },
+    "EncryptedMediaExtensions": {
+      "Enabled": false,
+      "Locked": true
+    },
+    "FirefoxHome": {
+      "SponsoredTopSites": false,
+      "Stories": false,
+      "Weather": false,
+      "Widgets": false
+    },
+    "FirefoxSuggest": {
+      "WebSuggestions": false,
+      "SponsoredSuggestions": false,
+      "OnlineEnabled": false
+    },
+    "Homepage": {
+      "URL": "about:blank",
+      "StartPage": "homepage",
+      "Locked": false
+    },
+    "NewTabPage": false,
+    "OverrideFirstRunPage": "",
+    "OverridePostUpdatePage": "",
+    "UserMessaging": {
+      "ExtensionRecommendations": false,
+      "FeatureRecommendations": false,
+      "MoreFromMozilla": false,
+      "SkipOnboarding": true
+    },
+    "Preferences": {
+      "browser.newtabpage.activity-stream.discoverystream.merino-provider.endpoint": {
+        "Value": "",
+        "Status": "locked"
+      },
+      "browser.newtabpage.activity-stream.unifiedAds.endpoint": {
+        "Value": "",
+        "Status": "locked"
+      },
+      "browser.newtabpage.pinned": {
+        "Value": "",
+        "Status": "default"
+      },
+      "browser.newtabpage.trainhopAddon.xpiBaseURL": {
+        "Value": "",
+        "Status": "locked"
+      },
+      "browser.region.network.url": {
+        "Value": "",
+        "Status": "locked"
+      },
+      "browser.urlbar.merino.endpointURL": {
+        "Value": "",
+        "Status": "locked"
+      },
+      "dom.push.connection.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "geo.enabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "geo.provider.network.url": {
+        "Value": "",
+        "Status": "locked"
+      },
+      "media.gmp-manager.updateEnabled": {
+        "Value": false,
+        "Status": "locked"
+      },
+      "network.connectivity-service.enabled": {
+        "Value": false,
+        "Status": "locked"
+      }
+    }
+  }
+}

@@ -14,11 +14,23 @@ ARG BASE_IMAGE
 FROM scratch AS ctx
 COPY build_files/ /
 
-# packages.sh alone, so editing another build step doesn't redo the dnf layer.
+# packages.sh and android-studio.sh alone, so editing another build step
+# doesn't redo their layers.
 FROM scratch AS pkgs
 COPY build_files/packages.sh /
 
+FROM scratch AS studio
+COPY build_files/android-studio.sh /
+
 FROM ${BASE_IMAGE}
+
+# A 1.6 GB download, so it comes first: a local rebuild reuses this layer until
+# the base or the versions.env entries change. The tarball stays in a tmpfs.
+ARG ANDROID_STUDIO_URL
+ARG ANDROID_STUDIO_SHA256
+RUN --mount=type=bind,from=studio,source=/,target=/ctx \
+    --mount=type=tmpfs,target=/var/tmp \
+    /ctx/android-studio.sh
 
 # Every package install goes here, in one layer, before system_files/: package
 # scriptlets run systemd-sysusers over every sysusers.d file, and with ours
