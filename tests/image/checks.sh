@@ -294,6 +294,51 @@ check "JDK 25 for command-line Gradle" in_image <<'EOF'
 javac -version 2>&1 | grep -q '^javac 25\.'
 EOF
 
+# Claude Code.
+# gpgcheck already ran in the build. This catches a build that lost it (an
+# unsigned package, or one signed by another key), and checks what rpm
+# actually imported from claude-code.asc: besides Fedora's key, only the
+# pinned one.
+claude_signed() {
+  local fingerprint keys sig
+  fingerprint="$(sed -n 's/^CLAUDE_CODE_KEY_FINGERPRINT=//p' versions.env)"
+  fingerprint=${fingerprint,,}
+  keys="$(podman exec "$ctr" rpmkeys --list | grep -v ' Fedora (' | cut -d' ' -f1)"
+  [[ $keys == "$fingerprint" ]] || { echo "      rpm trusts:"; indent <<<"$keys"; return 1; }
+  sig="$(podman exec "$ctr" rpm -q --qf '[%{OPENPGP:pgpsig}\n]' claude-code)"
+  grep -qi "Key ID ${fingerprint: -16}\$" <<<"$sig" || { indent <<<"$sig"; return 1; }
+}
+check "Claude Code: signed with the pinned key, the only extra key rpm trusts" claude_signed
+check "Claude Code: runs, owned by the package, sandbox tools present" in_image <<'EOF'
+claude --version | sed 's/^/      /'
+[[ "$(rpm -qf --qf '%{NAME}' /usr/bin/claude)" == claude-code ]]
+# Its optional sandbox needs both. They come with Kinoite. (type -P fails if
+# either is missing; command -v only if both are.)
+type -P bwrap socat >/dev/null
+EOF
+# Claude Code reads managed settings from /etc/claude-code only:
+# managed-settings.json and a managed-settings.d/ drop-in directory. The image
+# ships our file there and nothing else. The file itself stays image-owned in
+# /usr. Its proxy settings must be exactly the ones in proxy.env.
+check "Claude Code: managed settings turn off updates and set dev's proxy" in_image <<'EOF'
+settings=/usr/lib/android-dev-vm/claude-code/managed-settings.json
+proxy_env=/usr/lib/android-dev-vm/proxy.env
+[[ "$(ls -A /etc/claude-code)" == managed-settings.json ]]
+[[ "$(readlink -f /etc/claude-code/managed-settings.json)" == "$settings" ]]
+[[ "$(jq -r .env.DISABLE_UPDATES "$settings")" == 1 ]]
+names="$(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$proxy_env" | sort)"
+in_settings="$(jq -r '.env | keys[] | select(startswith("DISABLE_") | not)' "$settings" | sort)"
+[[ $in_settings == "$names" ]] ||
+  { echo "      variables differ from proxy.env:"; diff <(echo "$names") <(echo "$in_settings") | sed 's/^/        /'; exit 1; }
+bad=0
+. "$proxy_env"
+for name in $names; do
+  [[ "$(jq -r --arg name "$name" '.env[$name]' "$settings")" == "${!name}" ]] ||
+    { echo "      $name differs from proxy.env"; bad=1; }
+done
+exit "$bad"
+EOF
+
 # disk/build-qcow2.sh passes no --filesystem: Kinoite names no default, so the
 # image's install config has to.
 check "bootc installs to a btrfs root" in_image <<'EOF'

@@ -59,6 +59,11 @@ them.
 proxy setting. A program that ignores them gets no network at all. It can't
 get around the rule.
 
+Claude Code's managed settings (`/etc/claude-code/managed-settings.json`)
+carry the same proxy settings and turn off its update checks. They keep the
+installed Claude Code working and quiet. They don't confine `dev`, who can run
+any other program, including another copy of Claude Code.
+
 ### Changing the allowlist
 
 - Every change goes through a PR, and CI builds and tests the new image.
@@ -86,6 +91,12 @@ These are known and accepted for now. Some have a planned fix.
   end behind an allowlisted name (Google's for `dl.google.com`, the GitHub
   CDN) might route the tunnel to a service that isn't allowlisted. Whether it
   does depends on the provider.
+- **Logins in dev's session.** Whatever `dev` is signed in to, every process
+  of `dev` can use, Claude Code included: Claude Code's own token, and any
+  web session in dev's Firefox. Sign in to Claude Code from a browser on the
+  host: it prints a URL, and the page gives a code to paste back. That keeps
+  the claude.ai web session, which reaches far more than the token, out of
+  the VM. Don't sign in to other accounts in dev's Firefox.
 - **Services on loopback.** The rule allows all loopback traffic, so `dev`
   reaches any local service, not only Squid. Today the ones that matter are
   Squid and the DNS stub.

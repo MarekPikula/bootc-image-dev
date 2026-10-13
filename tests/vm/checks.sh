@@ -184,6 +184,10 @@ check "dev: direct TCP over IPv4 is blocked" dev_blocked 'exec 3<>/dev/tcp/1.1.1
 check "dev: direct TCP over IPv6 is blocked" dev_blocked 'exec 3<>/dev/tcp/2606:4700:4700::1111/443'
 check "dev: direct UDP (DNS to 1.1.1.1) is blocked" dev_blocked 'exec 3>/dev/udp/1.1.1.1/53; printf x >&3'
 check "dev: ICMP is blocked" dev_blocked 'ping -c 1 -W 1 1.1.1.1'
+# bubblewrap, as Claude Code's sandbox and Flatpak use it: UID 0 inside the
+# user namespace is still UID 1500 to the rule.
+check "dev: direct TCP from a user namespace (bubblewrap) is blocked" dev_blocked \
+  'bwrap --ro-bind / / --dev /dev --unshare-user --uid 0 bash -c "exec 3<>/dev/tcp/1.1.1.1/443"'
 
 # As dev with a clean login environment, so the proxy comes from profile.d.
 as_dev_login() {
@@ -296,6 +300,38 @@ studio_uses_proxy() {
   [[ -z $refused ]] || { echo "      Squid refused:"; indent <<<"$refused"; return 1; }
 }
 check "Android Studio starts and goes through Squid" studio_uses_proxy
+
+# Claude Code with no proxy in its environment: the managed settings alone
+# must send it through Squid, with no direct attempt. The VM has no login, so
+# a dummy key makes it call the API. The API refuses the key, and the tunnel
+# is what counts.
+claude_uses_proxy() {
+  local tunnels stopped _
+  tunnels="$(squid_tunnels api.anthropic.com:443)"
+  stopped="$(dev_stopped_packets)"
+  as_dev env -i HOME=/var/home/dev PATH=/usr/bin ANTHROPIC_API_KEY=dummy claude -p hi
+  ((rc != 124 && rc != 255)) || { echo "      rc $rc: $out"; return 1; }
+  (("$(dev_stopped_packets)" == stopped)) || { echo "      Claude Code tried direct connections"; return 1; }
+  # Squid logs a tunnel when it closes.
+  for _ in {1..10}; do
+    (("$(squid_tunnels api.anthropic.com:443)" > tunnels)) && return 0
+    sleep 1
+  done
+  echo "      no tunnel to api.anthropic.com, rc $rc: $out"
+  return 1
+}
+check "Claude Code takes the proxy from its managed settings" claude_uses_proxy
+
+# DISABLE_UPDATES in the managed settings. Without it, `claude install` would
+# download a self-updating copy into dev's home, which comes first on PATH. A
+# login shell, so the proxy is there to download it with.
+claude_no_own_copy() {
+  as_dev_login 'claude install stable'
+  ((rc != 124 && rc != 255)) || { echo "      rc $rc: $out"; return 1; }
+  [[ ! -e /var/home/dev/.local/bin/claude && ! -e /var/home/dev/.local/share/claude ]] ||
+    { echo "      claude install put a copy in dev's home: $out"; return 1; }
+}
+check "dev: claude install doesn't install its own copy" claude_no_own_copy
 
 # Fail closed, as at boot: when the rule's unit fails, systemd-user-sessions
 # can't start and /run/nologin stays (pam_nologin then refuses everyone but

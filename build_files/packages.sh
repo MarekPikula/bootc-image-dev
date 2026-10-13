@@ -5,6 +5,9 @@
 #   java-25-openjdk-devel: command-line Gradle. Android Studio brings its own
 #     runtime (also 25). Fedora 44 has no older JDK.
 #   git
+#   claude-code: from Anthropic's dnf repo, see below.
+# Already in Kinoite, and asserted by tests/image/checks.sh: bubblewrap and
+# socat, which Claude Code's optional sandbox needs.
 # Removed, unused in a QEMU VM:
 #   vpnc with its NetworkManager and Plasma plugins.
 #   usermode: the setuid userhelper, for console apps that ask for root's
@@ -25,3 +28,26 @@ rm -rf /var/spool/squid /var/www
 # squid's scriptlet adds it to wbpriv, for winbind (NTLM) authentication
 # helpers. They're unused here, and the group has no sysusers.d entry.
 groupdel wbpriv
+
+# Claude Code, from the repo in versions.env. Its signing key is
+# claude-code.asc next to this script, so a new key comes through a PR. dnf
+# imports every key in that file into rpm's keyring (where it stays), so it
+# must hold the pinned key and nothing else: no second key, no subkey.
+key=/ctx/claude-code.asc
+fingerprints="$(gpg --homedir "$(mktemp -d -p /run)" --show-keys --with-colons "$key" |
+  awk -F: '$1 == "fpr" { print $10 }')"
+[[ $fingerprints == "${CLAUDE_CODE_KEY_FINGERPRINT:?}" ]] ||
+  { echo "claude-code.asc: unexpected key(s): $fingerprints" >&2; exit 1; }
+packages() { rpm -qa --qf '%{NAME}\n' | sort -u; }
+before="$(packages)"
+# --repo: this transaction sees only Anthropic's repo. repo_gpgcheck: the
+# repo's metadata is signed too.
+dnf -y install --repofrompath="claude-code,${CLAUDE_CODE_REPO:?}" --repo=claude-code \
+  --setopt=claude-code.gpgcheck=1 --setopt=claude-code.repo_gpgcheck=1 \
+  --setopt="claude-code.gpgkey=file://$key" claude-code
+# claude-code needs only glibc. An Obsoletes: in it could still remove or
+# replace other packages, so the transaction must have added claude-code and
+# changed nothing else.
+changed="$(diff <(echo "$before") <(packages) | grep '^[<>]' || true)"
+[[ $changed == "> claude-code" ]] ||
+  { printf 'claude-code changed other packages:\n%s\n' "$changed" >&2; exit 1; }

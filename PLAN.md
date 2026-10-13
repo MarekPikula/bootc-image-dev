@@ -3,8 +3,8 @@
 This is the roadmap for the bootc Android dev VM. CLAUDE.md lists the
 constraints that don't change.
 
-- Status: PRs 1–4 and the bootc-install qcow2 build merged, PR 5 (Android
-  tooling) in review.
+- Status: PRs 1–5 and the bootc-install qcow2 build merged, PR 6 (Claude
+  Code) in review.
 - Research checked against upstream docs on 2026-09-28.
 
 ## Decisions
@@ -16,7 +16,7 @@ constraints that don't change.
 | Accounts | `admin` = UID 1000 (`wheel`), `dev` = UID 1500 (no extra groups), via sysusers.d | This is the approach bootc recommends. Fixed UIDs keep the nftables rule stable. |
 | Passwords | One-shot tty1 prompt at first boot, before the display manager (Plasma Login Manager on Kinoite 44) | Nothing is baked in, there's no window where accounts have no password, and it works in the Boxes console. |
 | polkit | Deny-by-default rule for `dev`, with a short allowlist | Removes every admin prompt from dev's session, so Claude Code can't trigger a password dialog that the human might fill in. |
-| Claude Code | RPM from Anthropic's signed dnf repo, installed under `/usr` | Updates arrive with the image, and `dev` can't replace the binary. It needs no extra runtime hosts. |
+| Claude Code | RPM from Anthropic's signed dnf repo (stable channel), installed under `/usr` | Updates arrive with the image, and `dev` can't replace the system's binary. It needs no extra runtime hosts. [Details](#claude-code) |
 | Signing | **Deferred** | Keyless identity pinning isn't possible in `policy.json` yet. [Details](#signing-future-pr) |
 | Linting | pre-commit: the linters as local hooks that run the sha256-pinned binaries, plus `pre-commit/pre-commit-hooks` pinned by commit | One config for the devcontainer, CI and an optional git hook. pre-commit can't hash-pin PyPI packages, so the hooks' `ruamel.yaml` dependency is pinned by version only. That gap is limited to lint tooling and never reaches the image. |
 | DNS exfiltration | Documented in v1, hardened later | [Open questions](#open-questions) |
@@ -25,15 +25,16 @@ constraints that don't change.
 
 ```
 Containerfile              FROM kinoite:44; RUN android-studio.sh; RUN packages.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint
-versions.env               build inputs: base image tag, Android Studio URL + sha256
+versions.env               build inputs: base image tag, Android Studio URL + sha256,
+                           Claude Code's dnf repo and signing-key fingerprint
 build_files/
   packages.sh              every package install, in one layer before COPY system_files/
-                           (see the Containerfile): squid, JDK 25, git, later Claude Code, ...
+                           (see the Containerfile): squid, JDK 25, git, Claude Code
+  claude-code.asc          Anthropic's public signing key for the claude-code repo
   android-studio.sh        download, sha256 check, unpack to /usr/lib/android-studio, updates
                            off. Its own RUN, see the Containerfile
   build.sh                 runs the numbered steps in order
   15-su.sh                 su for wheel only (pam_wheel requisite)
-  30-claude-code.sh        managed settings (the RPM itself is installed by packages.sh)
   40-services.sh           enable (symlinks in /usr) and mask units
   50-caps.sh               drops file capabilities that could undo the network rule
 system_files/              overlay copied to / (paths below are relative to /)
@@ -65,7 +66,8 @@ system_files/              overlay copied to / (paths below are relative to /)
   etc/xdg/kioslaverc
   usr/lib/android-dev-vm/firefox/policies.json   Firefox policy: background services off
   etc/firefox/policies/policies.json             symlink to it, where Firefox looks first
-  etc/claude-code/managed-settings.json
+  usr/lib/android-dev-vm/claude-code/managed-settings.json   updates off, dev's proxy
+  etc/claude-code/managed-settings.json          symlink to it, the only place Claude Code reads
   etc/security/pwquality.conf.d/50-android-dev-vm.conf    enforce_for_root
 .pre-commit-config.yaml    hadolint, shellcheck, actionlint, file hygiene
 disk/build-qcow2.sh        builds the qcow2 (bootc install to-disk, from the image itself), root and CI only
@@ -187,11 +189,68 @@ README.md                  for the people running the VM
 | Shells | `/etc/profile.d/dev-proxy.sh` sets upper- and lowercase `HTTP(S)_PROXY` and `NO_PROXY=localhost,127.0.0.1,::1`, only when the UID is 1500. |
 | Apps launched by Plasma or systemd --user | A user-environment generator sets the same variables. |
 | Gradle daemon and other JVMs | `JAVA_TOOL_OPTIONS` with `-Dhttp(s).proxyHost/Port` and `-Dhttp.nonProxyHosts`. |
-| Claude Code | The `env` block in managed settings. This also covers background agents, which don't inherit the login shell. |
+| Claude Code | The `env` block in managed settings, with the same values as `proxy.env` (the image checks compare them). This also covers background agents, which don't inherit the login shell. Its sandbox proxy forwards to the same proxy, according to its docs (not tested: that needs a signed-in session). |
 | KDE apps | `/etc/xdg/kioslaverc` with `ProxyType=4` (take the proxy from the environment). |
 | Firefox | Nothing extra: its default "use system proxy settings" picks up the variables (checked in a VM). |
 | Android Studio | Nothing extra: its runtime picks up `JAVA_TOOL_OPTIONS`, and its IDE settings default to auto-detect (the VM test checks it). |
 | sdkmanager | Uses the proxy from Studio. On the command line it's a JVM too, so probably `JAVA_TOOL_OPTIONS` (not checked). Otherwise pass `--proxy=http --proxy_host=127.0.0.1 --proxy_port=3128`. |
+
+### Claude Code
+
+- **Install.** `packages.sh` installs the `claude-code` RPM from Anthropic's
+  dnf repo. It's one binary, `/usr/bin/claude`, that needs only glibc.
+  - The stable channel, about a week behind `latest` and without releases
+    that had major regressions. The version isn't pinned: every build takes
+    the channel's current release.
+  - Anthropic's public key is in the repo (`build_files/claude-code.asc`),
+    so a new key comes through a PR. The build stops unless the file holds
+    exactly the key whose fingerprint is in `versions.env`, because dnf
+    imports every key in it. dnf then checks the package's signature and
+    the repo metadata's (`repo_gpgcheck`).
+  - The key stays in rpm's keyring in the image. Only root installs
+    packages, and root already trusts what this key signs.
+  - That dnf call sees only Anthropic's repo (`--repo`), and the build stops
+    if the transaction changed any package but claude-code (an `Obsoletes:`
+    could). The repo isn't left configured in the image.
+  - The image checks assert the installed package carries that key's
+    signature, and that it's the only key besides Fedora's that rpm trusts.
+- **Managed settings.** Claude Code reads them only from `/etc/claude-code`:
+  `managed-settings.json` and a `managed-settings.d/` drop-in directory.
+  The image ships the file, a symlink to the image-owned one under
+  `/usr/lib/android-dev-vm/claude-code/`, and nothing else there. Nothing a
+  user or project sets overrides them. They apply to admin too.
+  - `DISABLE_UPDATES`: no update checks, no hint to run `dnf upgrade`, which
+    can't work here, and `claude install` no longer puts a self-updating
+    copy in the user's home, ahead of `/usr/bin/claude` on PATH.
+  - The variables from `proxy.env`. The VM test runs Claude Code with an
+    empty environment and expects its API call in Squid's log.
+  - `DISABLE_ERROR_REPORTING`: the error tracker's host isn't allowlisted.
+  - Not `DISABLE_TELEMETRY`: it also switches off feature flags, and with
+    them Remote Control and other features that roll out behind flags. The
+    price is one refused request per session to
+    `http-intake.logs.us5.datadoghq.com` in `android-dev-denied`. Usage
+    metrics (no code, prompts or paths) reach Anthropic through
+    `api.anthropic.com`.
+  - Bypass-permissions mode stays available (open question 4).
+- **Sandbox.** Claude Code's optional Bash sandbox needs bubblewrap and
+  socat. Both come with Kinoite, and the image checks assert they're there.
+  bubblewrap isn't setuid. It uses user namespaces, where dev's sockets
+  still belong to UID 1500 (the VM test checks the rule from inside one).
+  The optional seccomp filter (an npm package) isn't installed.
+- **Hosts.** Checked in a VM with no login: a print-mode call and an
+  interactive start used `api.anthropic.com`, `platform.claude.com` and
+  `raw.githubusercontent.com` (the changelog), and made no direct attempt.
+  Not allowlisted, so these don't work:
+  - `storage.googleapis.com`: install counts in `/plugin` (CLAUDE.md rules
+    it out).
+  - `registry.npmjs.org`: plugins and MCP servers that come from npm.
+  - `*.frame.claudeusercontent.com`: reading artifacts.
+  - `bridge.claudeusercontent.com`: Claude in Chrome (there's no Chrome).
+- **Signing in** happens in a browser on the host, for the reason in
+  `docs/security-model.md` ("Logins in dev's session"). In dev's Firefox it
+  doesn't work anyway: the sign-in page needs `*.hcaptcha.com` for email
+  sign-in and `accounts.google.com` for Google sign-in, and neither is
+  allowlisted.
 
 ### Privilege
 
@@ -280,7 +339,7 @@ README.md                  for the people running the VM
   any staged one. The README explains that the next timer run will stage the
   newer image again.
 - **Weekly rebuild.** The CI rebuild picks up the current Kinoite 44 image and
-  the latest `claude-code` RPM.
+  the current `claude-code` RPM from the stable channel.
 - **Other bumps.** Android Studio and the Fedora major version change through
   PRs that edit `versions.env`.
 
@@ -358,14 +417,16 @@ separate so you can commit them on their own and push them from the host.
    them in a QEMU VM, and they bring the setuid `userhelper` and
    `vmware-user-suid-wrapper`.
 6. **Claude Code.** dnf repo with a GPG fingerprint check, installed from
-   `packages.sh` so every package shares one layer, managed settings,
-   bubblewrap and socat for its optional sandbox.
+   `packages.sh` so every package shares one layer, and managed settings.
+   bubblewrap and socat for its optional sandbox are already in Kinoite.
 7. **Updates and publishing.**
    - Stage-only drop-in.
    - A reproducible Android Studio layer, so a `bootc upgrade` doesn't fetch
      Studio again (about 1.6 GB) when only the base changed: unpack it in its
      own stage, `COPY --from` it, and build with `--timestamp` so the layer's
-     digest stays the same. Check with two builds.
+     digest stays the same. Check with two builds. If the packages layer
+     gets the same treatment, Claude Code (a new release most weeks, about
+     100 MB compressed) should move to a layer of its own.
    - ⚙ `publish.yml` with the `release`-bound publish job.
    - You create the `release` Environment first.
 8. **Docs.**
@@ -383,7 +444,7 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, and `su` is wheel-only. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries, the rule and Squid are enabled from `/usr`, user sessions require the rule, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Later: `claude --version`, no `--apply` in the update unit. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, and `su` is wheel-only. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries, the rule and Squid are enabled from `/usr`, user sessions require the rule, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Later: no `--apply` in the update unit. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | documented in README | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
@@ -408,7 +469,8 @@ VM test assertions (`tests/vm/checks.sh`):
   - dev directly: TCP over IPv4 and IPv6, UDP 53 to a public resolver, and
     ICMP all fail without hanging, and the rule's counters go up. The
     counters show it was the rule and not a missing route (CI has no IPv6
-    upstream, so there's no IPv6 control).
+    upstream, so there's no IPv6 control). TCP is tried from inside a
+    bubblewrap user namespace too.
   - dev through the proxy, with a clean login environment (profile.d):
     `https://dl.google.com` and `https://api.anthropic.com` get CONNECT 200,
     and `https://example.com` gets 403, which `android-dev-denied` lists.
@@ -420,6 +482,11 @@ VM test assertions (`tests/vm/checks.sh`):
     (`kwin_wayland --virtual`), fetches the SDK lists through Squid, makes no
     direct connection attempt, and in that first minute gets nothing refused
     except its plain-HTTP connectivity check. The test VM has 6 GiB for it.
+- **Claude Code.** Run as dev with an empty environment and a dummy API key,
+  it calls `api.anthropic.com` through Squid (so the proxy came from the
+  managed settings) and makes no direct attempt. What Squid refuses isn't
+  asserted: the version isn't pinned, and a new release that asks for one
+  more host shouldn't block the weekly build.
 - **With updates.** The stage-only drop-in is in effect.
 
 The test harness reaches the guest over SSH without shipping any test users or
@@ -470,8 +537,6 @@ Each question has a recommendation.
      Store and similar won't work.
 4. **Claude Code bypass-permissions mode.**
    - *Recommendation:* leave it available, because the VM is the sandbox.
-   - Managed settings set `DISABLE_TELEMETRY` and `DISABLE_ERROR_REPORTING`,
-     so denied telemetry hosts don't clutter the Squid log.
 5. **Trust in the published image until signing lands.**
    - VMs trust whatever reaches the GHCR `stable` tag over TLS: any workflow run
      with `packages: write`, or the owner's credentials.
@@ -540,7 +605,9 @@ starting from plain Kinoite.
 - Universal Blue image template: <https://github.com/ublue-os/image-template>
 - Claude Code: <https://code.claude.com/docs/en/setup>,
   <https://code.claude.com/docs/en/network-config>,
-  <https://code.claude.com/docs/en/managed-settings>
+  <https://code.claude.com/docs/en/managed-settings>,
+  <https://code.claude.com/docs/en/sandboxing>,
+  <https://code.claude.com/docs/en/data-usage>
 - Android Studio: <https://developer.android.com/studio>,
   <https://developer.android.com/studio/intro/studio-config>
 - systemd-ssh-generator(8):

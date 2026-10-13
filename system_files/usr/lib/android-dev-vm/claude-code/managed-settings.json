@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "env": {
+    "DISABLE_UPDATES": "1",
+    "DISABLE_ERROR_REPORTING": "1",
+    "http_proxy": "http://127.0.0.1:3128",
+    "https_proxy": "http://127.0.0.1:3128",
+    "no_proxy": "localhost,127.0.0.1,::1",
+    "HTTP_PROXY": "http://127.0.0.1:3128",
+    "HTTPS_PROXY": "http://127.0.0.1:3128",
+    "NO_PROXY": "localhost,127.0.0.1,::1",
+    "JAVA_TOOL_OPTIONS": "-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=3128 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=3128 -Dhttp.nonProxyHosts=localhost|127.0.0.1|[::1]"
+  }
+}

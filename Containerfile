@@ -14,10 +14,10 @@ ARG BASE_IMAGE
 FROM scratch AS ctx
 COPY build_files/ /
 
-# packages.sh and android-studio.sh alone, so editing another build step
-# doesn't redo their layers.
+# packages.sh (with Claude Code's signing key) and android-studio.sh alone, so
+# editing another build step doesn't redo their layers.
 FROM scratch AS pkgs
-COPY build_files/packages.sh /
+COPY build_files/packages.sh build_files/claude-code.asc /
 
 FROM scratch AS studio
 COPY build_files/android-studio.sh /
@@ -37,6 +37,8 @@ RUN --mount=type=bind,from=studio,source=/,target=/ctx \
 # present they'd bake admin and dev into the image's /etc/passwd
 # (tests/image/checks.sh catches that). The tmpfs mounts keep dnf's cache,
 # state and logs out of the image.
+ARG CLAUDE_CODE_REPO
+ARG CLAUDE_CODE_KEY_FINGERPRINT
 RUN --mount=type=bind,from=pkgs,source=/,target=/ctx \
     --mount=type=tmpfs,target=/run \
     --mount=type=tmpfs,target=/var/cache \
