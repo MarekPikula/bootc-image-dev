@@ -141,11 +141,16 @@ check "setuid/setgid files and capabilities match tests/image/privileged-files.t
   expect_privileged_files
 
 # Units.
+check "updates are staged, never applied with a reboot" in_image <<'EOF'
+exec_start="$(systemctl cat bootc-fetch-apply-updates.service | sed -n 's/^ExecStart=//p' | tail -n 1)"
+[[ $exec_start == "/usr/bin/bootc upgrade --quiet" ]] || { echo "      ExecStart=$exec_start"; exit 1; }
+EOF
 check "our units are pulled in from /usr" in_image <<'EOF'
 bad=0
 for link in multi-user.target.wants/android-dev-firstboot.service \
   sysinit.target.wants/dev-egress-firewall.service \
-  multi-user.target.wants/squid.service; do
+  multi-user.target.wants/squid.service \
+  timers.target.wants/bootc-fetch-apply-updates.timer; do
   [[ "$(readlink "/usr/lib/systemd/system/$link")" == "../${link#*/}" ]] ||
     { echo "      missing: $link"; bad=1; }
 done
@@ -172,11 +177,11 @@ check "root is locked" in_image <<'EOF'
 field="$(getent shadow root | cut -d: -f2)"
 [[ $field =~ ^[!*]+$ ]] || { echo "      root's shadow field: '$field'"; exit 1; }
 EOF
-check "plasma-setup, avahi, cups, geoclue and mcelog are masked" in_image <<'EOF'
+check "plasma-setup, avahi, cups, geoclue, mcelog and boot.automount are masked" in_image <<'EOF'
 bad=0
 for unit in plasma-setup.service avahi-daemon.service avahi-daemon.socket \
   cups.service cups.socket cups.path cups-browsed.service geoclue.service \
-  mcelog.service; do
+  mcelog.service boot.automount; do
   state="$(systemctl is-enabled "$unit" 2>&1 || true)"
   [[ $state == masked ]] || { echo "      $unit: $state"; bad=1; }
 done

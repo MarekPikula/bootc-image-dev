@@ -333,6 +333,24 @@ claude_no_own_copy() {
 }
 check "dev: claude install doesn't install its own copy" claude_no_own_copy
 
+# Updates: the timer is armed, and the service it starts only stages (no
+# --apply, which would reboot).
+updates_stage_only() {
+  local exec_start
+  exec_start="$(systemctl show -p ExecStart --value bootc-fetch-apply-updates.service)"
+  [[ $exec_start == *"argv[]=/usr/bin/bootc upgrade --quiet ;"* ]] ||
+    { echo "      ExecStart: $exec_start"; return 1; }
+  systemctl is-active --quiet bootc-fetch-apply-updates.timer ||
+    { echo "      timer: $(systemctl is-active bootc-fetch-apply-updates.timer)"; return 1; }
+}
+check "updates: the timer is armed and only stages" updates_stage_only
+
+# See boot.automount in build_files/40-services.sh.
+boot_not_automounted() {
+  ! findmnt -t autofs /boot >/dev/null || { findmnt /boot | indent; return 1; }
+}
+check "updates: /boot isn't an automount" boot_not_automounted
+
 # plymouthd can hang while quitting the boot splash. plymouth-quit.service
 # then times out after 20 s, and its drop-in must kill plymouthd, or the boot
 # (and the first-boot prompt, which comes after it) would wait forever.

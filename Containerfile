@@ -2,7 +2,9 @@
 #
 # Build with the inputs in versions.env:
 #   podman build --build-arg-file versions.env -t localhost/android-dev-vm .
-# buildah records the actual base in the image's
+#
+# CI adds --timestamp 0, so unchanged layers keep their digest (PLAN.md,
+# Updates). buildah records the actual base in the image's
 # org.opencontainers.image.base.{name,digest} annotations.
 
 # No default on purpose: the value lives in versions.env.

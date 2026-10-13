@@ -4,7 +4,7 @@ This is the roadmap for the bootc Android dev VM. CLAUDE.md lists the
 constraints that don't change.
 
 - Status: PRs 1–5 and the bootc-install qcow2 build merged, PR 6 (Claude
-  Code) in review.
+  Code) in review, PR 7 (updates and publishing) in progress.
 - Research checked against upstream docs on 2026-09-28.
 
 ## Decisions
@@ -52,7 +52,7 @@ system_files/              overlay copied to / (paths below are relative to /)
     systemd-user-sessions.service.d/10-dev-egress.conf
     plymouth-quit.service.d/10-android-dev-vm.conf          kills a plymouthd that hung
     squid.service.d/10-android-dev-vm.conf
-    bootc-fetch-apply-updates.service.d/10-stage-only.conf
+    bootc-fetch-apply-updates.service.d/10-android-dev-vm.conf   stage only
     android-dev-firstboot.service
     multi-user.target.wants/android-dev-firstboot.service   image-owned enablement
     systemd-sysusers.service.d/50-android-dev-vm.conf       imports admin/dev password credentials
@@ -340,10 +340,32 @@ README.md                  for the people running the VM
 
 ### Updates
 
-- **Timer.** The stock `bootc-fetch-apply-updates.service` runs
-  `bootc upgrade --apply`, which reboots. Our drop-in replaces it with
-  `bootc upgrade --quiet`, which stages only. The new image applies at the
-  user's next reboot.
+- **Timer.** Kinoite ships `bootc-fetch-apply-updates.timer` (an hour after
+  boot, then every 8 hours) but doesn't enable it. We enable it from `/usr`.
+  The stock service runs `bootc upgrade --apply`, which reboots as soon as an
+  update is staged. Our drop-in replaces it with `bootc upgrade --quiet`,
+  which stages only. The new image applies at the user's next reboot.
+- **`/boot` isn't an automount.** systemd-gpt-auto-generator automounts the
+  EFI System Partition on `/boot`, in front of ostree's own `/boot` on the
+  root filesystem, with a 2-minute idle timeout. In one VM shutdown it was
+  stopped before `ostree-finalize-staged.service` ran, which failed
+  ("Remounting /boot read-write: Invalid argument") and dropped the staged
+  update without a word. It's a race (staging and rebooting after the idle
+  timeout didn't reproduce it), and a known upstream problem on Fedora 44
+  (bootc-dev/bootc#2402, ostreedev/ostree#2544), with no fix released yet.
+  The image masks `boot.automount`. bootupd mounts the ESP itself, which a
+  VM check confirmed, and a staged update then applied. An existing VM gets
+  the mask with the update that brings it, so that one update can still hit
+  the race once.
+- **Reusing the Android Studio layer.** CI builds with `--timestamp 0`, so a
+  layer's digest depends only on its content. The Studio layer (1.6 GB
+  compressed) then stays the same when only the base changes, and a VM
+  doesn't download it again. Checked with two full builds on two Kinoite
+  bases two weeks apart: same layer, also after gzip. ostree resets every
+  file's time to 0 when it deploys, so nothing is lost. The image's
+  creation date becomes 1970, so the version label carries the date.
+  Rechunking the whole image (as Fedora does for its own images) would make
+  every unchanged package reusable too (see Later).
 - **Rollback.** `bootc rollback` swaps to the previous deployment and discards
   any staged one. The README explains that the next timer run will stage the
   newer image again.
@@ -366,13 +388,18 @@ README.md                  for the people running the VM
     4.5 minutes per run when it was 3.8 GB).
 - **`pr.yml`** calls it as job `ci`, so the checks are `ci / lint` and
   `ci / build`. Both are required.
-- **`publish.yml`** (push to `main`, weekly, dispatch):
-  - Runs the same build and test, then exports an oci-archive.
+- **`publish.yml`** (push to `main`, Mondays 03:17 UTC, dispatch):
+  - A `version` job sets the version, `44.<yyyymmdd>.<run number>` like
+    Kinoite's own. `bootc status` shows it.
+  - It calls `_build-test.yml` with that version and `export-image`, which
+    uploads the tested image (an OCI layout) as the `image` artifact, only
+    when the VM test passed.
   - A `publish` job bound to the `release` Environment (deployment branches:
     `main` only) is the only job with `packages: write`.
-  - That job pushes with skopeo and checks that the pushed config digest equals
-    the tested one.
-  - Tags: `stable` (what VMs track), `44.<yyyymmdd>`, `sha-<git>`.
+  - That job pushes the image once with skopeo, under its version, and checks
+    the pushed config digest is the tested image's ID. `sha-<12 hex>` and
+    then `stable` (what VMs track) point at the same manifest.
+  - One publish at a time. A queued run waits.
 - **qcow2.** `disk/build-qcow2.sh` runs the image itself in
   `sudo podman run --privileged` against rootful storage, and its bootc
   installs it into a sparse 64 GiB raw file
@@ -429,20 +456,14 @@ separate so you can commit them on their own and push them from the host.
    `packages.sh` so every package shares one layer, and managed settings.
    bubblewrap and socat for its optional sandbox are already in Kinoite.
 7. **Updates and publishing.**
-   - Stage-only drop-in.
-   - Find out why a staged update once failed to finalize at shutdown
-     (`ostree-finalize-staged`: "Remounting /boot read-write: Invalid
-     argument") and the VM booted the old image without saying so. It
-     happened on the boot where plymouthd hung, but a hung plymouthd alone
-     didn't reproduce it.
-   - A reproducible Android Studio layer, so a `bootc upgrade` doesn't fetch
-     Studio again (about 1.6 GB) when only the base changed: unpack it in its
-     own stage, `COPY --from` it, and build with `--timestamp` so the layer's
-     digest stays the same. Check with two builds. If the packages layer
-     gets the same treatment, Claude Code (a new release most weeks, about
-     100 MB compressed) should move to a layer of its own.
+   - The update timer enabled, with the stage-only drop-in.
+   - `boot.automount` masked, so staged updates aren't dropped at shutdown.
+   - ⚙ `--timestamp 0` in CI's build, so the Android Studio layer is reused
+     across bases.
    - ⚙ `publish.yml` with the `release`-bound publish job.
-   - You create the `release` Environment first.
+   - You create the `release` Environment first (deployment branches:
+     `main`), and after the first publish make the GHCR package public, so
+     VMs can pull it without credentials.
 8. **Docs.**
    - `README.md`:
      - creating the VM in GNOME Boxes from the qcow2
@@ -451,14 +472,17 @@ separate so you can commit them on their own and push them from the host.
      - updates and rollback
    - `docs/allowlist.md`: edit → PR → CI → staged update → reboot.
 9. **Later, each after discussion:** image signing, a DNS filtering resolver,
-   narrower GitHub hosts, automated Android Studio bump PRs.
+   narrower GitHub hosts, automated Android Studio bump PRs, rechunking the
+   image (`rpm-ostree compose build-chunked-oci`) so updates download only
+   the packages that changed, and dropping the `boot.automount` mask once
+   bootc or ostree handle it.
 
 ## Testing
 
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, and `su` is wheel-only. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries, the rule and Squid are enabled from `/usr`, user sessions require the rule, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Later: no `--apply` in the update unit. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, and `su` is wheel-only. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries, the rule and Squid are enabled from `/usr`, user sessions require the rule, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service ends up running `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | documented in README | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
@@ -504,7 +528,8 @@ VM test assertions (`tests/vm/checks.sh`):
   managed settings) and makes no direct attempt. What Squid refuses isn't
   asserted: the version isn't pinned, and a new release that asks for one
   more host shouldn't block the weekly build.
-- **With updates.** The stage-only drop-in is in effect.
+- **Updates.** The timer is active and its service runs
+  `bootc upgrade --quiet`, and `/boot` isn't an automount.
 
 The test harness reaches the guest over SSH without shipping any test users or
 keys in the image:

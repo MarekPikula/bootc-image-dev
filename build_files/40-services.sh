@@ -11,6 +11,9 @@ wants() {
 wants multi-user.target android-dev-firstboot.service
 wants sysinit.target dev-egress-firewall.service
 wants multi-user.target squid.service
+# Kinoite ships the update timer but doesn't enable it. Its service only stages
+# updates here (see its drop-in).
+wants timers.target bootc-fetch-apply-updates.timer
 
 # plasma-setup: KDE's first-boot wizard, which creates its own admin user.
 #   android-dev-firstboot.service replaces it.
@@ -18,9 +21,14 @@ wants multi-user.target squid.service
 #   desktop users, outside dev's nftables rule. Not needed in this VM.
 # mcelog: machine checks belong to the host. On AMD hosts it fails at boot
 #   ("CPU is unsupported"), leaving the system degraded.
+# boot.automount: systemd-gpt-auto-generator's ESP automount, which ends up in
+#   front of ostree's /boot. It can be gone when ostree-finalize-staged runs
+#   at shutdown, which drops the staged update. bootupd mounts the ESP
+#   itself. See PLAN.md, Updates.
 systemctl mask \
   plasma-setup.service \
   avahi-daemon.service avahi-daemon.socket \
   cups.service cups.socket cups.path cups-browsed.service \
   geoclue.service \
-  mcelog.service
+  mcelog.service \
+  boot.automount
