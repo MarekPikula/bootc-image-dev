@@ -50,6 +50,7 @@ system_files/              overlay copied to / (paths below are relative to /)
   usr/lib/systemd/system/
     dev-egress-firewall.service
     systemd-user-sessions.service.d/10-dev-egress.conf
+    plymouth-quit.service.d/10-android-dev-vm.conf          kills a plymouthd that hung
     squid.service.d/10-android-dev-vm.conf
     bootc-fetch-apply-updates.service.d/10-stage-only.conf
     android-dev-firstboot.service
@@ -271,6 +272,14 @@ README.md                  for the people running the VM
     log in.
   - `systemd-mute-console` keeps kernel and systemd status messages off the
     prompt while it runs.
+  - The unit starts after `plymouth-quit.service` has taken the boot splash
+    off tty1. plymouthd once hung while quitting in a VM. Fedora's unit
+    then times out after 20 s, but stops only the `plymouth quit` client:
+    plymouthd keeps the display, and `plymouth-quit-wait.service` (no
+    timeout), which the gettys wait for, waits forever. Our first-boot unit,
+    which ran its own `plymouth quit` with no timeout, hung too. A drop-in
+    now kills plymouthd when `plymouth-quit.service` doesn't succeed, on
+    every boot.
   - The script lives in `/usr/libexec` so SELinux labels it `bin_t` and it may
     run `passwd`. Under `/usr/lib` it would be `lib_t`, run as `init_t`, and
     fail. The homes it creates with `mkhomedir_helper` get `restorecon`.
@@ -421,6 +430,11 @@ separate so you can commit them on their own and push them from the host.
    bubblewrap and socat for its optional sandbox are already in Kinoite.
 7. **Updates and publishing.**
    - Stage-only drop-in.
+   - Find out why a staged update once failed to finalize at shutdown
+     (`ostree-finalize-staged`: "Remounting /boot read-write: Invalid
+     argument") and the VM booted the old image without saying so. It
+     happened on the boot where plymouthd hung, but a hung plymouthd alone
+     didn't reproduce it.
    - A reproducible Android Studio layer, so a `bootc upgrade` doesn't fetch
      Studio again (about 1.6 GB) when only the base changed: unpack it in its
      own stage, `COPY --from` it, and build with `--timestamp` so the layer's
@@ -456,6 +470,9 @@ VM test assertions (`tests/vm/checks.sh`):
   - `android-dev-firstboot.service` ran and succeeded, sysusers created the
     accounts, both passwords were set from credentials, and the homes exist,
     are private and are labelled `user_home_dir_t`. Root is still locked.
+  - A plymouthd that hangs while quitting (a stopped one) is killed when
+    `plymouth-quit.service` times out, and the first-boot unit starts after
+    that unit.
   - dev: `sudo`, `run0` and `pkexec` are denied (non-zero, no hang waiting for
     a password), `su` is refused before any prompt, and `pkcheck` on a real
     dev process says no to managing units.

@@ -4,8 +4,9 @@
 [Unit]
 Description=Set the admin and dev passwords on first boot
 # systemd-firstboot asks for keymap and locale first, so passwords are typed
-# with the right layout.
-After=systemd-sysusers.service systemd-firstboot.service systemd-user-sessions.service plymouth-start.service
+# with the right layout. plymouth-quit.service has taken the boot splash off
+# tty1 by then, or killed a plymouthd that hung (see its drop-in).
+After=systemd-sysusers.service systemd-firstboot.service systemd-user-sessions.service plymouth-quit.service
 Before=display-manager.service getty@tty1.service
 # Marked done only on success, so a failed run asks again next boot.
 ConditionPathExists=!/var/lib/android-dev-vm/firstboot.done
@@ -13,7 +14,6 @@ ConditionPathExists=!/var/lib/android-dev-vm/firstboot.done
 [Service]
 Type=oneshot
 StateDirectory=android-dev-vm
-ExecStartPre=-/usr/bin/plymouth quit
 ExecStart=/usr/libexec/android-dev-vm/set-passwords
 StandardInput=tty
 StandardOutput=inherit

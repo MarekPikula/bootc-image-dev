@@ -333,6 +333,32 @@ claude_no_own_copy() {
 }
 check "dev: claude install doesn't install its own copy" claude_no_own_copy
 
+# plymouthd can hang while quitting the boot splash. plymouth-quit.service
+# then times out after 20 s, and its drop-in must kill plymouthd, or the boot
+# (and the first-boot prompt, which comes after it) would wait forever.
+# Simulated with a stopped plymouthd and a restart of the unit.
+plymouth_hang_killed() {
+  local pid start bad=0
+  [[ " $(systemctl show -p After --value android-dev-firstboot.service) " == *" plymouth-quit.service "* ]] ||
+    { echo "      the first-boot unit doesn't start after plymouth-quit.service"; bad=1; }
+  plymouthd --mode=boot --pid-file=/run/plymouth/pid ||
+    { echo "      couldn't start plymouthd"; return 1; }
+  pid="$(cat /run/plymouth/pid)"
+  kill -STOP "$pid"
+  start=$SECONDS
+  systemctl restart plymouth-quit.service 2>/dev/null
+  # Under 15 s, the quit didn't hang, and the check proves nothing.
+  ((SECONDS - start >= 15)) || { echo "      plymouth quit didn't hang"; bad=1; }
+  systemctl reset-failed plymouth-quit.service
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "      plymouthd is still there"
+    kill -KILL "$pid"
+    bad=1
+  fi
+  return "$bad"
+}
+check "a plymouthd that hangs while quitting gets killed" plymouth_hang_killed
+
 # Fail closed, as at boot: when the rule's unit fails, systemd-user-sessions
 # can't start and /run/nologin stays (pam_nologin then refuses everyone but
 # root, see tests/image/checks.sh). A runtime drop-in makes the unit fail, and
