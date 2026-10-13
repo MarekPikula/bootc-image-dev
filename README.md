@@ -1,0 +1,136 @@
+# Android dev VM
+
+A KDE desktop VM for Android development with Claude Code, built on Fedora
+Kinoite 44 as a bootc image. You run it in GNOME Boxes. It updates itself from
+images that CI builds, tests and publishes from this repository.
+
+How it differs from an ordinary desktop:
+
+- **Two accounts.** `dev` is for all your work, and Claude Code runs as `dev`.
+  `admin` is for administration only. `dev` can never become root.
+- **A short list of websites.** `dev` reaches the internet only through a proxy
+  that allows a list of domains: Claude, the Android SDK, Gradle, Maven,
+  GitHub and a few more. [docs/security-model.md](docs/security-model.md)
+  says what that protects and what it doesn't.
+- **An image, not installed packages.** You don't install software into the
+  system. Changes come as pull requests to this repository and reach the VM
+  as an update.
+
+Inside: Android Studio, JDK 25, git, Claude Code, Firefox and KDE Plasma.
+
+## Get the disk image
+
+Every successful run of the **Publish** workflow keeps the VM's disk image as
+an artifact for two weeks. Download `android-dev-vm-qcow2` from the latest
+green run under Actions → Publish (signed in to GitHub), or with the GitHub
+CLI after `gh auth login`:
+
+```
+gh run download -R MarekPikula/bootc-image-dev -n android-dev-vm-qcow2 \
+  "$(gh run list -R MarekPikula/bootc-image-dev -w publish.yml -s success -L 1 \
+     --json databaseId -q '.[0].databaseId')"
+```
+
+That gives `android-dev-vm.qcow2`, a 64 GB disk that grows as you use it.
+
+## Create the VM
+
+1. **Check nested virtualization on the host.** The Android emulator needs it.
+
+   ```
+   cat /sys/module/kvm_*/parameters/nested    # Y or 1
+   ```
+
+   Recent kernels turn it on by default. If yours shows `N` or `0`, add
+   `options kvm_intel nested=1` (or `kvm_amd`) to a file in
+   `/etc/modprobe.d/`, then reboot the host (or reload the module with no VMs
+   running).
+2. **Import the disk in GNOME Boxes.** Choose to create a virtual machine from
+   an image file and select `android-dev-vm.qcow2`. Boxes copies it, so you
+   can delete the download afterwards.
+3. **Give it room.** At least 8 GB of memory (Android Studio and the emulator
+   together need it) and 4 CPUs.
+
+## First boot
+
+The first boot asks on the VM's console:
+
+1. Language, keyboard layout and time zone. Pick the layout you'll type your
+   passwords with.
+2. A password for `admin`, then one for `dev`. Each is typed twice, must be
+   strong, and the two must differ. After a few failed tries it gives up:
+   reboot and it asks again.
+
+Then log in as `dev`. In a terminal, `ls /dev/kvm` should show the device.
+If it doesn't, the emulator won't start: check step 1 of Create the VM.
+
+## Daily use
+
+- **Android Studio** is in the application menu. Its setup wizard downloads
+  the SDK through the proxy. Google Play and other Google services in the
+  emulator don't work, because their domains aren't on the list.
+- **Claude Code.** Open a terminal and run `claude`. To sign in, it prints a
+  link: open it in a browser **on your host**, sign in, and paste the code the
+  page shows back into the terminal (Boxes shares the clipboard).
+- **Don't sign in to accounts in the VM's Firefox**, GitHub above all: every
+  process of `dev`, Claude Code included, could use that session (see
+  [docs/security-model.md](docs/security-model.md)).
+- **Something can't download.** Run `android-dev-denied` in a terminal. It
+  lists the domains the proxy refused, most frequent first. To get one added,
+  see [docs/allowlist.md](docs/allowlist.md). Only HTTPS goes through, and a
+  program that ignores the proxy settings gets no network at all.
+
+## Administration and updates
+
+**Never type admin's password in dev's session.** Nothing there should ever
+ask for it, so a prompt that does is not to be trusted. Log in as `admin` on
+a text console instead: Ctrl+Alt+F3 (in Boxes, send the key combination from
+its keyboard menu), and log out when you're done.
+
+The VM looks for a new image a while after boot and then a few times a day.
+It downloads and stages it, and never reboots on its own: the new image
+applies at your next reboot. Your files in `/var/home`, and the rest of
+`/var` and `/etc`, carry over. `/usr` comes from the image.
+
+As `admin`:
+
+- `sudo bootc status` shows the image you're running (its version), a staged
+  one, and the previous one.
+- `sudo bootc upgrade --apply` fetches an update now and reboots into it.
+- `sudo bootc rollback --apply` reboots into the previous image. The next
+  check stages the newest one again.
+- To stay on one version, switch to its tag (the version `bootc status`
+  shows), and switch back to `stable` to get updates again:
+
+  ```
+  sudo bootc switch --apply ghcr.io/marekpikula/bootc-image-dev:44.20261013.1
+  sudo bootc switch --apply ghcr.io/marekpikula/bootc-image-dev:stable
+  ```
+
+## When something goes wrong
+
+- **Nobody can log in after an update.** The login screen says the system is
+  still booting, or refuses every login: the network rule for `dev` didn't
+  load, and the VM refuses logins rather than run without it. Reboot and pick
+  the previous entry in the boot menu (press Esc or Shift while the VM starts
+  to show it). That lasts one boot, so log in as `admin` on the console and
+  switch to the version you're running, as above, to stay on it. Then report
+  the problem.
+- **The first-boot questions don't appear** and the screen stays black: wait
+  a minute.
+
+## For maintainers
+
+- [PLAN.md](PLAN.md): design decisions, the roadmap and open questions.
+- [CLAUDE.md](CLAUDE.md): the rules for working on this repository.
+- [docs/security-model.md](docs/security-model.md) and
+  [docs/allowlist.md](docs/allowlist.md).
+- Build and check locally:
+
+  ```
+  podman build --build-arg-file versions.env -t localhost/android-dev-vm .
+  tests/image/checks.sh localhost/android-dev-vm
+  ```
+
+  `tests/vm/run-vm.sh android-dev-vm.qcow2` boots a qcow2 from CI and runs
+  the VM checks.

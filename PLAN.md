@@ -3,8 +3,8 @@
 This is the roadmap for the bootc Android dev VM. CLAUDE.md lists the
 constraints that don't change.
 
-- Status: PRs 1–5 and the bootc-install qcow2 build merged, PR 6 (Claude
-  Code) in review, PR 7 (updates and publishing) in progress.
+- Status: PRs 1–7 and the bootc-install qcow2 build merged, PR 8 (docs) in
+  review.
 - Research checked against upstream docs on 2026-09-28.
 
 ## Decisions
@@ -484,7 +484,7 @@ separate so you can commit them on their own and push them from the host.
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
 | Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, and `su` is wheel-only. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries, the rule and Squid are enabled from `/usr`, user sessions require the rule, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service ends up running `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
-| Manual | documented in README | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
+| Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
 VM test assertions (`tests/vm/checks.sh`):
 

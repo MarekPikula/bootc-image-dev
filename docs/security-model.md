@@ -66,12 +66,8 @@ any other program, including another copy of Claude Code.
 
 ### Changing the allowlist
 
-- Every change goes through a PR, and CI builds and tests the new image.
-- The VM stages the update. It applies at the next reboot.
-- `android-dev-denied` (run as `dev`) lists the domains Squid refused
-  recently, most frequent first, as a starting point for a PR.
-- Keep entries narrow. `.google.com` and `storage.googleapis.com` stay out,
-  and the image checks enforce it.
+Every change goes through a PR, which CI builds and tests, and reaches VMs as
+an update. [allowlist.md](allowlist.md) has the steps.
 
 ## What this doesn't cover
 
