@@ -1,10 +1,19 @@
 name: Build and test
 
-# Reusable: pr.yml calls it now, publish.yml will too. Builds the image, checks
-# it, turns it into a qcow2 and boots that in a VM. All in one job, so the
-# multi-GB qcow2 never has to go through artifact storage between jobs.
+# Reusable: pr.yml and publish.yml call it. Builds the image, checks it, turns
+# it into a qcow2 and boots that in a VM. All in one job, so the multi-GB qcow2
+# never has to go through artifact storage between jobs.
 on:
   workflow_call:
+    inputs:
+      image-version:
+        description: The image's version label, shown by `bootc status`.
+        type: string
+        default: ci
+      export-image:
+        description: Upload the tested image as the "image" artifact (oci-archive) for publish.yml.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -68,8 +77,13 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       # Rootful: disk/build-qcow2.sh runs the image from rootful storage.
+      # --timestamp 0: unchanged layers keep their digest (PLAN.md, Updates).
       - name: Build image
-        run: sudo podman build --build-arg-file versions.env -t "$IMAGE" .
+        env:
+          IMAGE_VERSION: ${{ inputs.image-version }}
+        run: |
+          sudo podman build --timestamp 0 --build-arg-file versions.env \
+            --build-arg IMAGE_VERSION="$IMAGE_VERSION" -t "$IMAGE" .
 
       - name: Image checks
         run: sudo tests/image/checks.sh "$IMAGE"
@@ -85,6 +99,26 @@ jobs:
       - name: VM test
         timeout-minutes: 20
         run: tests/vm/run-vm.sh android-dev-vm.qcow2 vm-logs
+
+      # Only after the VM test passed: this is what publish.yml pushes. skopeo
+      # keeps the config, so the pushed image has the tested image's ID. An
+      # OCI layout directory, not an archive, which skopeo would unpack again
+      # on every read.
+      - name: Export image
+        if: ${{ inputs.export-image }}
+        run: |
+          sudo skopeo copy --quiet "containers-storage:$IMAGE" oci:image
+          sudo chown -R "$(id -u):$(id -g)" image
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: ${{ inputs.export-image }}
+        with:
+          name: image
+          path: image
+          # Its layers are already gzip-compressed.
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: error
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ always() && steps.qcow2.outcome == 'success' }}

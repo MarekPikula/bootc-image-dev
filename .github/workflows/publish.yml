@@ -1,0 +1,82 @@
+name: Publish
+
+# Builds and tests the image exactly as for a PR, then pushes the tested image
+# to GHCR, where VMs update from. Weekly too, for the current Kinoite base and
+# Claude Code release.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One publish at a time, in order. A queued run waits rather than cancelling the
+# one that's pushing.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+env:
+  # Keep in sync with REGISTRY_IMAGE in _build-test.yml (without the tag).
+  REPOSITORY: ghcr.io/marekpikula/bootc-image-dev
+
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # <Fedora major>.<date>.<run number>, like Kinoite's own 44.YYYYMMDD.N.
+      - id: version
+        run: |
+          base="$(sed -n 's/^BASE_IMAGE=//p' versions.env)"
+          echo "version=${base##*:}.$(date -u +%Y%m%d).$GITHUB_RUN_NUMBER" >>"$GITHUB_OUTPUT"
+
+  ci:
+    needs: version
+    uses: ./.github/workflows/_build-test.yml
+    with:
+      image-version: ${{ needs.version.outputs.version }}
+      export-image: true
+
+  # The only job that can write to the registry, and only from main: the
+  # release Environment allows no other branch.
+  publish:
+    needs: [version, ci]
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image
+          path: image
+
+      # The image goes up once, under its version. That manifest must have the
+      # tested image's config (its image ID). The other tags then point at the
+      # same manifest, `stable` (what VMs track) last.
+      - name: Push to GHCR
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tested="$(skopeo inspect --raw oci:image | jq -r .config.digest)"
+          printf '%s' "$GH_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          skopeo copy --retry-times 3 --digestfile digest oci:image "docker://$REPOSITORY:$VERSION"
+          pushed="$REPOSITORY@$(<digest)"
+          config="$(skopeo inspect --raw "docker://$pushed" | jq -r .config.digest)"
+          [[ $config == "$tested" ]] ||
+            { echo "::error::pushed config $config, not the tested $tested"; exit 1; }
+          for tag in "sha-${GITHUB_SHA::12}" stable; do
+            skopeo copy --retry-times 3 --preserve-digests "docker://$pushed" "docker://$REPOSITORY:$tag"
+          done
+          echo "$pushed: $VERSION, sha-${GITHUB_SHA::12}, stable (config $tested)"
