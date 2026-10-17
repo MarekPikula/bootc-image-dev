@@ -11,9 +11,13 @@ on:
         type: string
         default: ci
       export-image:
-        description: Upload the tested image as the "image" artifact (oci-archive) for publish.yml.
+        description: Upload the tested image as the "image" artifact (an OCI layout directory) for publish.yml.
         type: boolean
         default: false
+    outputs:
+      image-id:
+        description: The tested image's ID (its config digest, without "sha256:").
+        value: ${{ jobs.build.outputs.image-id }}
 
 permissions:
   contents: read
@@ -62,6 +66,8 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    outputs:
+      image-id: ${{ steps.build.outputs.image-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -78,12 +84,17 @@ jobs:
 
       # Rootful: disk/build-qcow2.sh runs the image from rootful storage.
       # --timestamp 0: unchanged layers keep their digest (PLAN.md, Updates).
+      # --annotation: the manifest would otherwise carry Kinoite's version,
+      # inherited from the base, next to our label.
       - name: Build image
+        id: build
         env:
           IMAGE_VERSION: ${{ inputs.image-version }}
         run: |
           sudo podman build --timestamp 0 --build-arg-file versions.env \
-            --build-arg IMAGE_VERSION="$IMAGE_VERSION" -t "$IMAGE" .
+            --build-arg IMAGE_VERSION="$IMAGE_VERSION" \
+            --annotation org.opencontainers.image.version="$IMAGE_VERSION" -t "$IMAGE" .
+          echo "image-id=$(sudo podman image inspect --format '{{.Id}}' "$IMAGE")" >>"$GITHUB_OUTPUT"
 
       - name: Image checks
         run: sudo tests/image/checks.sh "$IMAGE"

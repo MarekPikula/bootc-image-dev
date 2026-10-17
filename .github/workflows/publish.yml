@@ -33,7 +33,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # <Fedora major>.<date>.<run number>, like Kinoite's own 44.YYYYMMDD.N.
+      # <Fedora major>.<date>.<run number>, shaped like Kinoite's 44.YYYYMMDD.N.
       - id: version
         run: |
           base="$(sed -n 's/^BASE_IMAGE=//p' versions.env)"
@@ -61,15 +61,20 @@ jobs:
           name: image
           path: image
 
-      # The image goes up once, under its version. That manifest must have the
-      # tested image's config (its image ID). The other tags then point at the
-      # same manifest, `stable` (what VMs track) last.
+      # The image goes up once, under its version. Both the artifact and that
+      # manifest must have the config (the image ID) of the image the build
+      # job tested. The other tags then point at the same manifest, `stable`
+      # (what VMs track) last.
       - name: Push to GHCR
         env:
           VERSION: ${{ needs.version.outputs.version }}
+          TESTED_ID: ${{ needs.ci.outputs.image-id }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          tested="$(skopeo inspect --raw oci:image | jq -r .config.digest)"
+          tested="sha256:${TESTED_ID:?}"
+          artifact="$(skopeo inspect --raw oci:image | jq -r .config.digest)"
+          [[ $artifact == "$tested" ]] ||
+            { echo "::error::artifact config $artifact, not the tested $tested"; exit 1; }
           printf '%s' "$GH_TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           skopeo copy --retry-times 3 --digestfile digest oci:image "docker://$REPOSITORY:$VERSION"
           pushed="$REPOSITORY@$(<digest)"

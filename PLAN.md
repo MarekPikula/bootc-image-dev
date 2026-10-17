@@ -443,16 +443,21 @@ README.md                  for the people running the VM
 - **`pr.yml`** calls it as job `ci`, so the checks are `ci / lint` and
   `ci / build`. Both are required.
 - **`publish.yml`** (push to `main`, Mondays 03:17 UTC, dispatch):
-  - A `version` job sets the version, `44.<yyyymmdd>.<run number>` like
-    Kinoite's own. `bootc status` shows it.
+  - A `version` job sets the version, `44.<yyyymmdd>.<run number>`, shaped
+    like Kinoite's own (whose last part counts builds per day, ours never
+    resets). `bootc status` shows it, and the manifest's
+    `org.opencontainers.image.version` annotation carries it too (otherwise
+    it would be Kinoite's, inherited from the base).
   - It calls `_build-test.yml` with that version and `export-image`, which
     uploads the tested image (an OCI layout) as the `image` artifact, only
     when the VM test passed.
   - A `publish` job bound to the `release` Environment (deployment branches:
     `main` only) is the only job with `packages: write`.
-  - That job pushes the image once with skopeo, under its version, and checks
-    the pushed config digest is the tested image's ID. `sha-<12 hex>` and
-    then `stable` (what VMs track) point at the same manifest.
+  - That job pushes the image once with skopeo, under its version. The
+    build job passes out the ID of the image it tested, and both the
+    artifact's and the pushed manifest's config digest must equal it.
+    `sha-<12 hex>` and then `stable` (what VMs track) point at the same
+    manifest.
   - One publish at a time. A queued run waits.
 - **qcow2.** `disk/build-qcow2.sh` runs the image itself in
   `sudo podman run --privileged` against rootful storage, and its bootc
