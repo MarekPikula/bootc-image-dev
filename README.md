@@ -136,6 +136,9 @@ As `admin`:
   on it. Then report the problem.
 - **The first-boot questions don't appear** and the screen stays black: wait
   a minute.
+- **Boxes says "Redirection of USB device … failed"** when you attach a
+  phone: the host's file manager has the phone open for file transfer. Eject
+  it there first, then attach it to the VM again.
 
 ## For maintainers
 
