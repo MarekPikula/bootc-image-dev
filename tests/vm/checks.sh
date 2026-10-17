@@ -241,15 +241,20 @@ check "dev may open /dev/kvm (mode 0666)" dev_kvm
 # Every listening socket, as "protocol address process". dev reaches all of them
 # over loopback, so a new one gets reviewed here (docs/security-model.md,
 # Services on loopback). Port 22 is the test's own sshd. Squid's UDP sockets
-# on random ports are its DNS client. Runs before anything dev starts.
+# on random ports are its DNS client. spice-webdavd and avahi run because the
+# test VM has Boxes' folder-sharing port (run-vm.sh). avahi's socket is bound
+# to every address, but it uses only lo. Runs before anything dev starts.
 expected_listeners="tcp 0.0.0.0:22 systemd
 tcp 127.0.0.1:3128 squid
+tcp 127.0.0.1:9843 spice-webdavd
 tcp 127.0.0.53%lo:53 systemd-resolve
 tcp 127.0.0.54:53 systemd-resolve
+udp 0.0.0.0:5353 avahi-daemon
 udp 127.0.0.1:323 chronyd
 udp 127.0.0.53%lo:53 systemd-resolve
 udp 127.0.0.54:53 systemd-resolve
-udp [::1]:323 chronyd"
+udp [::1]:323 chronyd
+udp [::]:5353 avahi-daemon"
 listeners() {
   ss -Hlntup | awk '{
     match($0, /users:\(\("[^"]+"/)
@@ -460,6 +465,20 @@ studio_plugins_auto_update() {
     { cat /var/home/dev/.config/Google/AndroidStudio*/options/updates.xml 2>&1 | indent; return 1; }
 }
 check "Android Studio updates plugins automatically for dev" studio_plugins_auto_update
+
+# Boxes (PLAN.md). run-vm.sh adds the virtio ports Boxes adds, so udev has
+# started spice-webdavd, and with it avahi, which must use lo alone.
+boxes_shared_folders() {
+  local unit ifaces
+  for unit in spice-webdavd.service avahi-daemon.service; do
+    systemctl is-active --quiet "$unit" ||
+      { systemctl status --no-pager "$unit" 2>&1 | indent; return 1; }
+  done
+  ifaces="$(journalctl -b -u avahi-daemon.service -o cat |
+    sed -n 's/^New relevant interface \([^ ]*\) for mDNS\.$/\1/p' | LC_ALL=C sort -u)"
+  [[ $ifaces == $'lo.IPv4\nlo.IPv6' ]] || { echo "      avahi's interfaces: ${ifaces//$'\n'/ }"; return 1; }
+}
+check "Boxes folder sharing: spice-webdavd runs, avahi only on lo" boxes_shared_folders
 
 # Claude Code with no proxy in its environment: the managed settings alone
 # must send it through Squid, with no direct attempt. The VM has no login, so

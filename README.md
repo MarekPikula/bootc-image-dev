@@ -89,6 +89,11 @@ then shut the VM down and start it again.
   Studio comes with Claude Code's plugin: run `claude` in Studio's own
   terminal, or press Ctrl+Esc, and Claude's edits show up in Studio's diff
   viewer, with your current selection as context.
+- **Shared folders.** In Boxes, open the VM's settings, then Devices &
+  Shares, and add a folder under Shared Folders. In the VM, open Dolphin,
+  press Ctrl+L, type `webdav://localhost:9843/` and press Enter. To keep it
+  in the sidebar, right-click it under the location bar and choose Add to
+  Places. Anything that runs as `dev` can read and change what you share.
 - **Don't sign in to accounts in the VM's Firefox**, GitHub above all: every
   process of `dev`, Claude Code included, could use that session (see
   [docs/security-model.md](docs/security-model.md)).

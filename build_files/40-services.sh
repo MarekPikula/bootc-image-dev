@@ -17,8 +17,8 @@ wants timers.target bootc-fetch-apply-updates.timer
 
 # plasma-setup: KDE's first-boot wizard, which creates its own admin user.
 #   android-dev-firstboot.service replaces it.
-# avahi, cups, geoclue: root daemons that reach the network on behalf of
-#   desktop users, outside dev's nftables rule. Not needed in this VM.
+# cups, geoclue: root daemons that reach the network on behalf of desktop
+#   users, outside dev's nftables rule. Not needed in this VM.
 # mcelog: machine checks belong to the host. On AMD hosts it fails at boot
 #   ("CPU is unsupported"), leaving the system degraded.
 # boot.automount: systemd-gpt-auto-generator's ESP automount, which ends up in
@@ -37,7 +37,6 @@ wants timers.target bootc-fetch-apply-updates.timer
 #   already, masked so it stays off.
 systemctl mask \
   plasma-setup.service \
-  avahi-daemon.service avahi-daemon.socket \
   cups.service cups.socket cups.path cups-browsed.service \
   geoclue.service \
   mcelog.service \
@@ -46,3 +45,10 @@ systemctl mask \
   systemd-nsresourced.service systemd-nsresourced.socket \
   systemd-mountfsd.service systemd-mountfsd.socket \
   polkit-agent-helper.socket
+
+# avahi: spice-webdavd requires it, and udev starts spice-webdavd when Boxes'
+# folder-sharing port appears, which Boxes adds to every VM. Disabled
+# otherwise (Fedora's preset enables it), which also
+# removes the alias D-Bus activation goes through. Its config (see its
+# drop-in) keeps it off the network either way.
+systemctl disable avahi-daemon.service avahi-daemon.socket

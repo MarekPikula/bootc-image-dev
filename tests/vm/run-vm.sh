@@ -52,7 +52,9 @@ cred() {
     "$1" "$(printf '%s' "$2" | base64 -w0)"
 }
 
-# 6 GiB: the VM checks start Android Studio, which takes about 2 GiB.
+# 6 GiB: the VM checks start Android Studio, which takes about 2 GiB. The two
+# virtio ports are the ones Boxes adds, for folder sharing and the clipboard,
+# so their services start as they would there. Nothing is on the other end.
 qemu-system-x86_64 \
   -machine q35,accel=kvm -cpu host -smp 4 -m 6144 \
   -drive "if=pflash,format=raw,readonly=on,file=$code" \
@@ -60,6 +62,11 @@ qemu-system-x86_64 \
   -drive "file=$work/disk.qcow2,if=virtio,format=qcow2" \
   -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:$port-:22" \
   -device virtio-net-pci,netdev=net0 \
+  -device virtio-serial-pci \
+  -chardev "socket,id=webdav,path=$work/webdav.sock,server=on,wait=off" \
+  -device virtserialport,chardev=webdav,name=org.spice-space.webdav.0 \
+  -chardev "socket,id=vdagent,path=$work/vdagent.sock,server=on,wait=off" \
+  -device virtserialport,chardev=vdagent,name=com.redhat.spice.0 \
   -display none -serial "file:$logs/console.log" \
   -smbios "$(cred tmpfiles.extra "d /var/roothome/.ssh 0700 root root -
 f~ /var/roothome/.ssh/authorized_keys 0600 root root - $(base64 -w0 "$work/key.pub")")" \
