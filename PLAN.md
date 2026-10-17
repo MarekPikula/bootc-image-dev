@@ -23,15 +23,21 @@ constraints that don't change.
 ## Repository layout
 
 ```
-Containerfile              FROM kinoite:44; RUN android-studio.sh; RUN packages.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint --fatal-warnings
+Containerfile              FROM kinoite:44; RUN android-studio.sh; RUN packages.sh; RUN studio-plugins.sh; RUN claude-plugins.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint --fatal-warnings
 versions.env               build inputs: base image tag, Android Studio URL + sha256,
-                           Claude Code's dnf repo and signing-key fingerprint
+                           Claude Code's dnf repo and signing-key fingerprint,
+                           the plugin marketplace's commit
 build_files/
   packages.sh              every package install, in one layer before COPY system_files/
                            (see the Containerfile): squid, JDK 25, git, Claude Code
   claude-code.asc          Anthropic's public signing key for the claude-code repo
   android-studio.sh        download, sha256 check, unpack to /usr/lib/android-studio, updates
                            off. Its own RUN, see the Containerfile
+  studio-plugins.txt       Studio's plugins (Claude Code, Flutter, Dart): ID, sha256, URL
+  studio-plugins.sh        download, sha256 check, unpack each into Studio's plugins
+                           directory. Its own RUN too
+  claude-plugins.sh        seeds Claude Code's plugins at the pinned marketplace commit
+                           into /usr/lib/claude-code-plugins. Its own RUN too
   build.sh                 runs the numbered steps in order
   15-su.sh                 su for wheel only (pam_wheel requisite)
   16-polkit-helper.sh      polkit's password helper for wheel only (4750 root:wheel)
@@ -45,8 +51,11 @@ system_files/              overlay copied to / (paths below are relative to /)
     proxy.env              dev's proxy variables, read by the generator and profile.d
     squid/squid.conf
     squid/allowlist.txt
+    avahi/avahi-daemon.conf        lo only, no wide-area DNS: only for spice-webdavd
+    emulator/advancedFeatures.ini  Vulkan and GLDirectMem off, copied to dev's ~/.android
   usr/libexec/android-dev-vm/
     set-passwords          first-boot prompt (bin_t, so it may run passwd)
+    clipboard-to-x11       puts the Wayland clipboard's text on X11's, for spice-vdagent
   usr/lib/systemd/system/
     dev-egress-firewall.service
     systemd-user-sessions.service.d/10-dev-egress.conf
@@ -56,29 +65,38 @@ system_files/              overlay copied to / (paths below are relative to /)
     android-dev-firstboot.service
     multi-user.target.wants/android-dev-firstboot.service   image-owned enablement
     systemd-sysusers.service.d/50-android-dev-vm.conf       imports admin/dev password credentials
-    systemd-firstboot.service.d/10-android-dev-vm.conf      runs it on our first boot (machine-id is empty)
+    systemd-firstboot.service.d/10-android-dev-vm.conf      runs it on our first boot (machine-id is empty), no header and footer
+    avahi-daemon.service.d/10-android-dev-vm.conf           our avahi config
     user@1500.service.d/10-dev-egress.conf                  dev's user manager needs the rule too
-  usr/lib/bootc/kargs.d/10-console.toml   serial console too, for headless logs
+  usr/lib/bootc/kargs.d/10-console.toml   serial console too, for headless logs, kernel errors only
   usr/lib/bootc/kargs.d/10-ssh.toml       no automatic sshd sockets (systemd.ssh_auto=no)
   usr/lib/systemd/resolved.conf.d/10-android-dev-vm.conf   LLMNR off
+  usr/lib/systemd/user/android-dev-clipboard.service   runs clipboard-to-x11 in every graphical session
+  usr/share/user-tmpfiles.d/android-dev-vm.conf        copies the emulator defaults into each profile
   usr/lib/bootc/install/50-android-dev-vm.toml   bootc install defaults (btrfs root)
   usr/lib/systemd/user-environment-generators/60-dev-proxy
   usr/share/polkit-1/rules.d/00-android-dev.rules
   usr/share/applications/android-studio.desktop
-  usr/bin/android-studio             symlink to /usr/lib/android-studio/bin/studio
+  usr/bin/android-studio             symlink to the launcher below
+  usr/libexec/android-dev-vm/android-studio   starts Studio, turns on plugin updates in a new profile
   usr/bin/android-dev-denied         lists recent TCP_DENIED domains from the Squid log
   etc/profile.d/dev-proxy.sh
   etc/xdg/kioslaverc
   usr/lib/android-dev-vm/firefox/policies.json   Firefox policy: background services off
   etc/firefox/policies/policies.json             symlink to it, where Firefox looks first
-  usr/lib/android-dev-vm/claude-code/managed-settings.json   updates off, dev's proxy
+  usr/lib/android-dev-vm/claude-code/managed-settings.json   updates off, dev's proxy, plugins
+  usr/lib/android-dev-vm/claude-code/CLAUDE.md   instructions for every project
+  usr/lib/android-dev-vm/claude-code/skills/     security-sweep, quality-sweep, ux-audit, emulator-test
   etc/claude-code/managed-settings.json          symlink to it, the only place Claude Code reads
+  etc/claude-code/CLAUDE.md                      symlink, Claude Code's managed-policy file
+  etc/claude-code/.claude/skills                 symlink, Claude Code's managed skills
   etc/security/pwquality.conf.d/50-android-dev-vm.conf    enforce_for_root
 .pre-commit-config.yaml    hadolint, shellcheck, actionlint, file hygiene
 disk/build-qcow2.sh        builds the qcow2 (bootc install to-disk, from the image itself), root and CI only
 tests/lib.sh               check/indent/finish helpers shared by image and VM checks
 tests/image/checks.sh      assertions run inside the built image with podman (no VM)
 tests/image/polkit.sh      runs polkitd in the image and checks dev against every registered action
+tests/image/claude-context.sh   runs Claude Code against a fake API and checks what it sends
 tests/image/firstboot.sh   drives the first-boot prompt with typed input in a throwaway container
 tests/image/privileged-files.txt   reviewed setuid/setgid files and file capabilities
 tests/vm/run-vm.sh         boots a qcow2 with qemu/KVM (UEFI), per-run SSH key via SMBIOS credentials
@@ -150,6 +168,9 @@ README.md                  for the people running the VM
     tamper with.
   - Nothing is cached, and `forwarded_for delete` keeps the client address
     out of requests.
+  - `shutdown_lifetime 1 seconds`: on stop, Squid waits that long for open
+    connections, 30 s by default, which held up every shutdown. Its clients
+    are all on the VM, going down with it.
   - A `squid.service` drop-in replaces `ExecStart` to use our config, because
     Fedora's unit takes the path from `/etc/sysconfig/squid`.
   - The image checks run `squid -k parse` in the image and fail on any
@@ -161,13 +182,20 @@ README.md                  for the people running the VM
     domains were denied.
   - `android-dev-denied` summarises them.
 - **Allowlist.** `squid/allowlist.txt` is the list, with a comment per group:
-  Claude, the Android SDK and Google's Maven repository, Android Studio
+  Claude, Google, Android Studio
   (Google's download CDN, developer.android.com, JetBrains' plugin
   marketplace), Gradle and its toolchain resolver, Maven Central and JitPack,
   GitHub, Google's static files and fonts for docs pages, and Firefox's
   remote settings and add-ons.
-  - `.gvt1.com` is the broadest entry: Google's download CDN serves far more
-    than Android tooling, but only downloads.
+  - `.google.com` and `.googleapis.com` are the broadest entries, allowed
+    whole on purpose. The Android SDK, Google's Maven repository, the
+    Flutter SDK (`storage.googleapis.com`), Google Play in the emulator and
+    Google sign-in all live there, and listing hosts one by one made every
+    new Google tool a firewall exception. The price: Cloud Storage, Drive,
+    Apps Script and the rest of Google's APIs can carry data out
+    (`docs/security-model.md`), which is no worse than GitHub.
+  - `.gvt1.com`: Google's download CDN serves far more than Android tooling,
+    but only downloads.
   - Claude Code's own updates need nothing extra, because the binary comes
     from the image.
   - Gradle distributions and toolchain JDKs come from GitHub.
@@ -196,7 +224,7 @@ README.md                  for the people running the VM
       request to Mozilla's suggestion service (`merino.services.mozilla.com`)
       and the page's third-party content: analytics
       (`www.googletagmanager.com`) and Google's sign-in widget
-      (`apis.google.com`).
+      (`apis.google.com`, allowed since with all of Google).
 
 ### Proxy configuration for dev
 
@@ -236,7 +264,8 @@ README.md                  for the people running the VM
 - **Managed settings.** Claude Code reads them only from `/etc/claude-code`:
   `managed-settings.json` and a `managed-settings.d/` drop-in directory.
   The image ships the file, a symlink to the image-owned one under
-  `/usr/lib/android-dev-vm/claude-code/`, and nothing else there. Nothing a
+  `/usr/lib/android-dev-vm/claude-code/`, and nothing else there but the
+  links to the instructions and skills below. Nothing a
   user or project sets overrides them. They apply to admin too.
   - `DISABLE_UPDATES`: no update checks, no hint to run `dnf upgrade`, which
     can't work here, and `claude install` no longer puts a self-updating
@@ -251,6 +280,76 @@ README.md                  for the people running the VM
     metrics (no code, prompts or paths) reach Anthropic through
     `api.anthropic.com`.
   - Bypass-permissions mode stays available (open question 4).
+- **Instructions for every project.** `/etc/claude-code/CLAUDE.md`, Claude
+  Code's managed-policy file, links to
+  `/usr/lib/android-dev-vm/claude-code/CLAUDE.md`. Claude Code loads it
+  before the user's and the project's own, and no one can exclude it, so it
+  changes only with the image. Projects add their own `CLAUDE.md` on top,
+  and may make the rules stricter, never looser.
+  - It started from the `CLAUDE.md` of an example Compose app made in the
+    VM. Its general rules moved here, and its project facts stay in the
+    project. It covers the VM (no root, the proxy, the emulator next to a
+    phone, Studio's shared Gradle daemon), "the check" (each project's one
+    command, Gradle or Flutter), fatal quality gates, dependencies, commits,
+    the review workflow, and always-on security and UX rules.
+  - It stays under the 200 lines Claude Code's docs advise, since every
+    session loads it. The long procedures are skills.
+  - dev can still write `~/.claude/CLAUDE.md`, which loads after ours. No
+    managed setting stops that.
+- **Skills.** `/etc/claude-code/.claude/skills` links to
+  `/usr/lib/android-dev-vm/claude-code/skills/`. Managed skills take
+  precedence over personal and project ones, and only their names and
+  descriptions are in every session: a body loads when the skill is used.
+  - `/security-sweep`, `/quality-sweep` and `/ux-audit` look at the whole
+    codebase (or every screen) with parallel subagents, and have a second
+    subagent try to refute each finding before it's reported.
+    `/emulator-test` drives the app over adb for what changed and checks
+    the outcome from system state. All of them stick to the emulator and
+    put it back the way they found it.
+  - The image checks run Claude Code as dev against a fake Messages API on
+    loopback and check that the request carries the managed CLAUDE.md and
+    every skill's name. That catches a path or format Claude Code doesn't
+    pick up, which it ignores without a word.
+- **Plugins.** The managed settings add Anthropic's official marketplace
+  (`anthropics/claude-plugins-official` on GitHub) and enable two plugins
+  from it, which users can't turn off. The image seeds both.
+  - Context7: documentation lookup through its hosted MCP server.
+  - Superpowers: skills for planning, test-driven development, debugging
+    and review. It lives in its own GitHub repository, and the marketplace
+    pins the commit.
+  - **Why a seed.** Claude Code installs a managed plugin from inside the
+    marketplace's repository (Context7) by itself, but skips one from
+    another repository ("External plugin … not in cache, skipping", seen in
+    a VM). A seed also keeps them reviewed: they change only through a PR
+    that bumps `CLAUDE_PLUGINS_COMMIT` in `versions.env`, like Studio's.
+  - **Build.** `build_files/claude-plugins.sh`, before `system_files/`
+    (whose managed settings would send claude to the VM's proxy), seeds
+    `/usr/lib/claude-code-plugins` with the marketplace at the pinned commit
+    and every plugin in `enabledPlugins`, and fails unless each came from
+    the commit it should. It names each plugin's directory after its
+    commit, which is what Claude Code looks up at runtime: `claude plugin
+    install` names it after the manifest's version, and on that miss
+    Claude Code downloaded its own copy of Superpowers into dev's home
+    (seen in a VM). It also makes the seed the same on every build of a
+    commit, so its layer only changes with a bump.
+  - **Runtime.** `CLAUDE_CODE_PLUGIN_SEED_DIR` in the managed settings'
+    `env` points at it. Claude Code never writes to or updates a seed. It
+    registers the seed at a user's first start, once it reaches the API
+    (not offline, nor with a fake API), and the plugins load from the
+    second start on (seen in a VM). A writable copy of the seed was
+    ignored, so it seems to want it read-only, which `/usr` is.
+  - The marketplace is a `git` source with the HTTPS URL. With a `github`
+    source, Claude Code tries SSH first, and dev's rule refuses that (seen
+    in a VM).
+  - **Context7's sign-in.** Its server refuses anonymous clients (401),
+    though the marketplace says otherwise. It wants an OAuth sign-in (or an
+    API key, which the image can't ship) through `clerk.context7.com`,
+    `accounts.context7.com` and `context7.com`, behind Cloudflare's
+    Turnstile (`challenges.cloudflare.com`). The allowlist names those and
+    `mcp.context7.com`, and dev signs in once from `/mcp`, in the VM's
+    Firefox (README). Turnstile blocks a scripted sign-in, so the full flow
+    is a manual test. Context7's queries are free text, so it's one more
+    host that can carry data out (`docs/security-model.md`).
 - **Sandbox.** Claude Code's optional Bash sandbox needs bubblewrap and
   socat. Both come with Kinoite, and the image checks assert they're there.
   bubblewrap isn't setuid. It uses user namespaces, where dev's sockets
@@ -260,16 +359,98 @@ README.md                  for the people running the VM
   interactive start used `api.anthropic.com`, `platform.claude.com` and
   `raw.githubusercontent.com` (the changelog), and made no direct attempt.
   Not allowlisted, so these don't work:
-  - `storage.googleapis.com`: install counts in `/plugin` (CLAUDE.md rules
-    it out).
   - `registry.npmjs.org`: plugins and MCP servers that come from npm.
   - `*.frame.claudeusercontent.com`: reading artifacts.
   - `bridge.claudeusercontent.com`: Claude in Chrome (there's no Chrome).
+- **Studio plugin.** Anthropic's JetBrains plugin, "Claude Code [Beta]",
+  comes with Studio (see Studio plugins). It shows Claude's edits in
+  Studio's diff viewer and shares the current selection and Studio's
+  diagnostics. It runs `/usr/bin/claude`, so the managed settings apply,
+  and talks to it over loopback.
 - **Signing in** happens in a browser on the host, for the reason in
   `docs/security-model.md` ("Logins in dev's session"). In dev's Firefox it
   doesn't work anyway: the sign-in page needs `*.hcaptcha.com` for email
-  sign-in and `accounts.google.com` for Google sign-in, and neither is
-  allowlisted.
+  sign-in, which isn't allowlisted. Google sign-in needs
+  `accounts.google.com`, which is, but it hasn't been tried.
+
+### Studio plugins
+
+- **Which.** Claude Code [Beta] (Anthropic, marketplace ID 27310), Flutter
+  (Google, 9212) and Dart (JetBrains, 6351), which Flutter needs. The
+  Flutter plugin needs a Flutter SDK, which isn't in the image. Its
+  releases and its Android build artifacts come from
+  `storage.googleapis.com`, which is allowlisted.
+- **Install.** `build_files/studio-plugins.txt` pins each release zip by ID,
+  sha256 and URL.
+  `studio-plugins.sh` checks each hash and that the zip holds the plugin
+  with that ID, and unpacks it into `/usr/lib/android-studio/plugins/<ID>`.
+  Studio loads plugins there as its own bundled ones. A copy of the list
+  goes to `/usr/lib/android-dev-vm/`, where the checks read it.
+- **Updates.** Studio updates its plugins on its own, from the JetBrains
+  Marketplace (allowlisted), into dev's profile, where a newer version
+  takes precedence over the image's. The image's versions are the starting
+  point for a new profile. Studio's default is to only offer updates, and
+  nothing in its installation can change that default (it's a hard-coded
+  `false`). So `/usr/bin/android-studio` (a launcher in
+  `/usr/libexec/android-dev-vm`) adds `PLUGINS_AUTO_UPDATE` to the
+  profile's `options/updates.xml`, once per profile, from the second start
+  on. Not before the first: a profile that exists before Studio's first
+  start makes it skip its first-start setup, the SDK wizard included (seen
+  in a VM). If dev turns the setting off later, it stays off. Settings →
+  Appearance & Behavior → System Settings → Updates → Update plugins
+  automatically.
+
+### Boxes
+
+What GNOME Boxes gives the VM over SPICE, and what the VM does to use it.
+
+- **Shared folders.** Boxes shares a host folder over a SPICE port
+  (`org.spice-space.webdav.0`). udev starts `spice-webdavd` when the port
+  appears, and it serves the folder as WebDAV on port 9843, which Dolphin
+  opens at `webdav://localhost:9843/` (README).
+  - spice-webdavd requires avahi, which was masked (Privilege, root-side
+    services). avahi now runs only for it, with its own config in
+    `/usr/lib/android-dev-vm/avahi/`, started by a drop-in. `lo` is its
+    only interface, so mDNS stays inside the VM, and wide-area DNS and the
+    reflector are off, so it sends nothing on the network. Seen in a VM:
+    spice-webdavd starts and keeps running, and listens on 127.0.0.1 only.
+  - It stays disabled. That also removes the alias that D-Bus activation
+    goes through, so no other client can start it.
+- **Clipboard.** spice-vdagent is an X11 client, and KWin hands the Wayland
+  clipboard to X11 only while an X11 window has focus. So text came from
+  the host but didn't go back (seen in Boxes).
+  - `android-dev-clipboard.service`, a user unit, starts with the graphical
+    session when spice-vdagent's daemon runs. It watches the Wayland
+    clipboard with `wl-paste --watch` and puts each new text on the X11 one
+    with `xclip` (added to the image), where spice-vdagent sends it on.
+  - It skips text that X11 already holds, which is how text from the host
+    arrives, so nothing echoes back.
+  - Seen in a headless KWin: text copied on the Wayland side reaches X11,
+    trailing newlines included, and text an X11 client sets (as
+    spice-vdagent does) reaches Wayland without the bridge taking it over.
+  - Text only: images copied in the VM don't reach the host.
+- **First-boot screen.**
+  - systemd-firstboot runs with `--chrome=no`, without its header and
+    footer bars. In Boxes its screen came out scrambled, likely because
+    Boxes resized the console under the bars (not reproduced). The
+    drop-in repeats Fedora's command to add it, and the image checks
+    compare the two.
+  - Kernel messages printed over the questions (reproduced). The
+    `loglevel=4` kernel argument (`kargs.d/10-console.toml`) keeps all but
+    errors and worse off the consoles, as `quiet` does, but leaves
+    systemd's boot messages, on the screen and on the CI test's serial log.
+    An error can still land on the prompt. A sysctl.d file didn't stick:
+    Plymouth puts back the level from before its splash, which starts in
+    the initrd (seen in a VM).
+- **Emulator.** With 3D acceleration on in Boxes, GL in the VM goes through
+  virgl and Vulkan is Mesa's software lavapipe. The emulator crashed at
+  start (SIGSEGV), with software graphics too, and ran with hardware
+  graphics and Vulkan and GLDirectMem off (seen in Boxes).
+  - A user-tmpfiles.d line copies an `advancedFeatures.ini` with those two
+    off into `~/.android/` when there's none. A file of the user's own, or
+    edits to ours, stay.
+  - The graphics mode is per virtual device, so the README says to choose
+    hardware graphics.
 
 ### Privilege
 
@@ -372,8 +553,9 @@ README.md                  for the people running the VM
   Without the rule,
   dev would get silent `YES` for systemd's mount and namespace helpers, and
   admin prompts (`CHALLENGE`) for rpm-ostree, firewalld and more.
-- **Root-side services dev could drive.** avahi, cups/cups-browsed and geoclue
-  are masked. NetworkManager, the flatpak system helper and rpm-ostree are
+- **Root-side services dev could drive.** cups/cups-browsed and geoclue are
+  masked. avahi runs only for Boxes' shared folders, on `lo` alone
+  (Boxes). NetworkManager, the flatpak system helper and rpm-ostree are
   covered by the polkit rule. `usermode` (the setuid `userhelper`, which asks
   for root's password) is removed.
   Remaining channels are listed in [Open questions](#open-questions).
@@ -425,8 +607,10 @@ README.md                  for the people running the VM
   newer image again.
 - **Weekly rebuild.** The CI rebuild picks up the current Kinoite 44 image and
   the current `claude-code` RPM from the stable channel.
-- **Other bumps.** Android Studio and the Fedora major version change through
-  PRs that edit `versions.env`.
+- **Other bumps.** Android Studio, the Fedora major version and Claude Code's
+  plugins (`CLAUDE_PLUGINS_COMMIT`) change through PRs that edit
+  `versions.env`, Studio's plugins through PRs that edit
+  `build_files/studio-plugins.txt`.
 
 ### CI
 
@@ -538,7 +722,9 @@ separate so you can commit them on their own and push them from the host.
      - nested virtualization on the host for the emulator
      - updates and rollback
    - `docs/allowlist.md`: edit → PR → CI → staged update → reboot.
-9. **Later, each after discussion:** image signing, a DNS filtering resolver,
+9. **Claude Code instructions for every project.** The managed
+   `CLAUDE.md`, the sweep skills and the official plugins (see Claude Code).
+10. **Later, each after discussion:** image signing, a DNS filtering resolver,
    narrower GitHub hosts, automated Android Studio bump PRs, rechunking the
    image (`rpm-ostree compose build-chunked-oci`) so updates download only
    the packages that changed, and dropping the `boot.automount` mask once
@@ -549,15 +735,16 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries and no IP addresses, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. systemd-firstboot runs Fedora's command plus `--chrome=no`. The clipboard bridge's user unit is pulled in from `/usr`. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only links to our managed settings, CLAUDE.md and skills. The settings turn updates off, have exactly the proxy variables from `proxy.env`, enable the official marketplace's Context7 and Superpowers, and point at the seed. Claude Code, run as dev against a fake API on loopback, sends the managed CLAUDE.md and every managed skill's name. The plugin seed holds every enabled plugin, in the directory named after its commit. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
-| Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
+| Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization and hardware graphics, Claude login, the first-boot screens and password flow in Boxes, a shared folder in Dolphin, text copied both ways, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
 VM test assertions (`tests/vm/checks.sh`):
 
 - **Accounts and privilege.**
   - Boot finishes with no failed units, SELinux is enforcing, the `kargs.d`
-    console arguments are applied, and bootc tracks the GHCR image.
+    console arguments are applied, only kernel errors and worse reach the
+    console, and bootc tracks the GHCR image.
   - `android-dev-firstboot.service` ran and succeeded, sysusers created the
     accounts, both passwords were set from credentials, and the homes exist,
     are private and are labelled `user_home_dir_t`. Root is still locked.
@@ -577,8 +764,8 @@ VM test assertions (`tests/vm/checks.sh`):
     open fails with a different error, which the check accepts.
 - **Network containment.**
   - Everything listening matches a reviewed list (resolved's stub, chronyd's
-    command port, Squid and the test's sshd), since dev reaches all of it
-    over loopback.
+    command port, Squid, spice-webdavd, avahi's mDNS socket and the test's
+    sshd), since dev reaches all of it over loopback.
   - The rule is loaded and survives `firewall-cmd --reload`.
   - Control: root can connect directly, which proves the negative checks
     below actually test something.
@@ -589,9 +776,8 @@ VM test assertions (`tests/vm/checks.sh`):
     bubblewrap user namespace too.
   - dev through the proxy, with a clean login environment (profile.d):
     `https://dl.google.com` and `https://api.anthropic.com` get CONNECT 200,
-    and `https://example.com` gets 403, which `android-dev-denied` lists.
-    `www.google.com` and `storage.googleapis.com` get 403 too, which also
-    catches an ACL added elsewhere in `squid.conf`.
+    `https://storage.googleapis.com` gets 200 too (the Flutter SDK), and
+    `https://example.com` gets 403, which `android-dev-denied` lists.
   - dev's systemd --user environment has the proxy variables and
     `JAVA_TOOL_OPTIONS`, parsed whole from the generator.
 - **Android tooling.**
@@ -600,6 +786,21 @@ VM test assertions (`tests/vm/checks.sh`):
     (`kwin_wayland --virtual`), fetches the SDK lists through Squid, makes no
     direct connection attempt, and in that first minute gets nothing refused
     except its plain-HTTP connectivity check. The test VM has 6 GiB for it.
+  - Studio's log from that run lists every plugin in `studio-plugins.txt` as
+    loaded. A second start through the launcher turns on automatic plugin
+    updates in that profile.
+- **Claude Code's plugins.** dev's first Claude Code run (the proxy check
+  above) registers the seeded marketplace. On the next start, nothing is
+  fetched from GitHub and dev's own plugin cache holds no copies, so the
+  plugins load from the seed.
+- **Boxes.** `run-vm.sh` gives the VM the two virtio ports Boxes adds
+  (`org.spice-space.webdav.0` and `com.redhat.spice.0`), with nothing on the
+  other end, so their services start as they would in Boxes.
+  - spice-webdavd and avahi run, and avahi's only interface is `lo`.
+  - The clipboard bridge, run as dev in a headless KWin: text copied on the
+    Wayland side reaches X11, and text an X11 client sets reaches Wayland
+    without the bridge taking it back.
+  - dev has the emulator defaults in `~/.android/advancedFeatures.ini`.
 - **Claude Code.** Run as dev with an empty environment and a dummy API key,
   it calls `api.anthropic.com` through Squid (so the proxy came from the
   managed settings) and makes no direct attempt. What Squid refuses isn't

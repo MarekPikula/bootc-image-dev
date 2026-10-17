@@ -83,24 +83,34 @@ These are known and accepted for now. Some have a planned fix.
   zones.
 - **Allowlisted hosts that accept uploads.** `github.com`,
   `*.githubusercontent.com`, the Anthropic API and claude.ai can all carry
-  data out, for example as a push to any GitHub repository. So can, with an
+  data out, for example as a push to any GitHub repository. So can all of
+  Google, which is allowed whole: Cloud Storage (`storage.googleapis.com`,
+  where a signed URL lets anyone upload to a bucket, with no account in the
+  VM), Drive, Apps Script and every other Google API. So can Context7
+  (`mcp.context7.com`), whose MCP server takes free-text queries. So can, with an
   account, JetBrains' plugin marketplace, the Gradle Plugin Portal
   (`plugins.gradle.org`) and addons.mozilla.org. Planned: narrow the
   GitHub hosts once we know which ones builds need.
 - **Domain fronting.** Squid checks only the name in the CONNECT request,
   not the TLS server name or `Host` header inside the tunnel. A shared front
-  end behind an allowlisted name (Google's for `dl.google.com`, the GitHub
-  CDN) might route the tunnel to a service that isn't allowlisted. Whether it
-  does depends on the provider.
+  end behind an allowlisted name (the GitHub CDN, for example) might route
+  the tunnel to a service that isn't allowlisted. Whether it does depends on
+  the provider.
 - **Logins in dev's session.** Whatever `dev` is signed in to, every process
   of `dev` can use, Claude Code included: Claude Code's own token, and any
   web session in dev's Firefox. Sign in to Claude Code from a browser on the
   host: it prints a URL, and the page gives a code to paste back. That keeps
   the claude.ai web session, which reaches far more than the token, out of
-  the VM. Don't sign in to other accounts in dev's Firefox.
+  the VM. Don't sign in to other accounts in dev's Firefox. The exception is
+  Context7, whose sign-in has to happen in the VM (the callback goes to
+  Claude Code on the VM's loopback): use an account made for it, with email
+  sign-in, not GitHub or Google, and sign out of the site in Firefox
+  afterwards. Claude Code keeps only Context7's token.
 - **Services on loopback.** The rule allows all loopback traffic, so `dev`
   reaches any local service, not only Squid. Today the ones that matter are
-  Squid and the DNS stub. The VM test fails when a new one starts listening.
+  Squid, the DNS stub and, while Boxes shares a folder, spice-webdavd, which
+  serves that folder to anyone on the VM. The VM test fails when a new one
+  starts listening.
 - **Root-side services.** Daemons such as NetworkManager, PackageKit, the
   flatpak system helper and fwupd connect on their own. polkit stops `dev`
   from changing their settings or installing anything, but some read-only
@@ -110,9 +120,12 @@ These are known and accepted for now. Some have a planned fix.
   (SPICE), USB devices passed through to the VM (phones over adb, or a
   Bluetooth adapter, which `dev` may use without asking polkit), and a vsock
   device if the VM has one, all bypass the network. They are under the
-  control of whoever runs the VM on the host.
+  control of whoever runs the VM on the host. Text copied in the VM, by any
+  process of `dev`'s, lands on the host's clipboard, and a shared folder is
+  open to `dev` for reading and writing.
 - **The emulator.** Android guests in the emulator get only HTTPS, through
-  the proxy, to allowlisted domains, so the Play Store and similar don't work.
+  the proxy, to allowlisted domains. Google's are, so the Play Store may
+  work, but anything it needs from other domains is refused.
 - **admin.** admin's traffic isn't filtered. admin must not give `dev`
   subordinate UIDs (`usermod --add-subuids`): processes under those UIDs
   aren't matched by the rule. systemd-nsresourced and systemd-mountfsd, which
@@ -120,6 +133,11 @@ These are known and accepted for now. Some have a planned fix.
   reload would delete dev's rule.
 - **Kernel and privileged-binary bugs.** A local root exploit, or a bug in a
   reviewed setuid or capability binary, defeats all of the above.
+- **Studio plugins update themselves** from the JetBrains Marketplace, into
+  dev's profile. A plugin runs as `dev`, so a bad release from a plugin's
+  vendor would run there without anyone reviewing it, the same as one
+  installed by hand. Claude Code's plugins don't: the image brings them,
+  pinned, and they change only through a PR.
 - **Image trust.** Images aren't signed yet. VMs accept whatever reaches the
   `stable` tag on GHCR over TLS, so anyone who can push there, a workflow run
   with `packages: write` or the repository owner's credentials, controls

@@ -40,6 +40,14 @@ console_kargs() {
 }
 check "kernel arguments from kargs.d are applied" console_kargs
 
+# loglevel=4 in kargs.d/10-console.toml. Fedora's default is 7.
+console_loglevel() {
+  local level
+  read -r level _ </proc/sys/kernel/printk
+  ((level == 4)) || { echo "      kernel.printk: $(cat /proc/sys/kernel/printk)"; return 1; }
+}
+check "only kernel errors and worse reach the console" console_loglevel
+
 tracks_registry() {
   local ref
   ref="$(bootc status --json | jq -r '.status.booted.image.image.image')"
@@ -241,15 +249,20 @@ check "dev may open /dev/kvm (mode 0666)" dev_kvm
 # Every listening socket, as "protocol address process". dev reaches all of them
 # over loopback, so a new one gets reviewed here (docs/security-model.md,
 # Services on loopback). Port 22 is the test's own sshd. Squid's UDP sockets
-# on random ports are its DNS client. Runs before anything dev starts.
+# on random ports are its DNS client. spice-webdavd and avahi run because the
+# test VM has Boxes' folder-sharing port (run-vm.sh). avahi's socket is bound
+# to every address, but it uses only lo. Runs before anything dev starts.
 expected_listeners="tcp 0.0.0.0:22 systemd
 tcp 127.0.0.1:3128 squid
+tcp 127.0.0.1:9843 spice-webdavd
 tcp 127.0.0.53%lo:53 systemd-resolve
 tcp 127.0.0.54:53 systemd-resolve
+udp 0.0.0.0:5353 avahi-daemon
 udp 127.0.0.1:323 chronyd
 udp 127.0.0.53%lo:53 systemd-resolve
 udp 127.0.0.54:53 systemd-resolve
-udp [::1]:323 chronyd"
+udp [::1]:323 chronyd
+udp [::]:5353 avahi-daemon"
 listeners() {
   ss -Hlntup | awk '{
     match($0, /users:\(\("[^"]+"/)
@@ -329,11 +342,9 @@ via_proxy() {
 }
 check "dev: dl.google.com through Squid" via_proxy dl.google.com 200
 check "dev: api.anthropic.com through Squid" via_proxy api.anthropic.com 200
+# Through .googleapis.com: the Flutter SDK's downloads.
+check "dev: storage.googleapis.com through Squid" via_proxy storage.googleapis.com 200
 check "dev: example.com refused by Squid (403)" via_proxy example.com 403
-# Never allowed (CLAUDE.md). The image checks read allowlist.txt, this also
-# catches an ACL added elsewhere in squid.conf.
-check "dev: www.google.com refused by Squid (403)" via_proxy www.google.com 403
-check "dev: storage.googleapis.com refused by Squid (403)" via_proxy storage.googleapis.com 403
 check "dev: IP literals refused by Squid (403)" via_proxy 1.1.1.1 403
 check "dev: ports other than 443 refused by Squid (403)" via_proxy dl.google.com:8443 403
 
@@ -398,15 +409,22 @@ squid_tunnels() {
 # (Studio takes the proxy from JAVA_TOOL_OPTIONS), with no direct attempt, and
 # in that first minute Squid must refuse nothing it asks for except its
 # plain-HTTP connectivity check (HTTPS only, see squid.conf).
+# dev_kwin NAME SESSION [systemd-run options]: runs SESSION as dev in a
+# headless KWin with Xwayland, as dev's user unit NAME.
+dev_kwin() {
+  local name=$1 session=$2
+  shift 2
+  systemctl start user@1500.service
+  systemd-run -M dev@ --user --unit="$name" --collect --quiet "$@" \
+    kwin_wayland --virtual --xwayland --socket="$name" --exit-with-session="$session"
+}
+
 studio_uses_proxy() {
   local tunnels stopped log_lines refused _ ok=1
   tunnels="$(squid_tunnels dl.google.com:443)"
   stopped="$(dev_stopped_packets)"
   log_lines="$(wc -l </var/log/squid/access.log)"
-  systemctl start user@1500.service
-  systemd-run -M dev@ --user --unit=studio-check --collect --quiet \
-    kwin_wayland --virtual --xwayland --socket=studio-check \
-    --exit-with-session=/usr/bin/android-studio ||
+  dev_kwin studio-check /usr/bin/android-studio ||
     { echo "      couldn't start Studio's unit"; return 1; }
   for _ in {1..36}; do
     (("$(squid_tunnels dl.google.com:443)" > tunnels)) && { ok=0; break; }
@@ -420,6 +438,9 @@ studio_uses_proxy() {
   # Then a little longer, for the marketplace and docs requests.
   ((ok == 0)) && sleep 30
   systemctl --user -M dev@ stop studio-check.service 2>/dev/null
+  # Squid logs a tunnel when it closes, and a connection Studio kept open
+  # closes only now.
+  ((ok == 0)) || { sleep 5; (("$(squid_tunnels dl.google.com:443)" > tunnels)) && ok=0; }
   ((ok == 0)) || { echo "      no tunnel to dl.google.com within 3 minutes"; return 1; }
   (("$(dev_stopped_packets)" == stopped)) || { echo "      Studio tried direct connections"; return 1; }
   refused="$(tail -n "+$((log_lines + 1))" /var/log/squid/access.log |
@@ -428,16 +449,102 @@ studio_uses_proxy() {
 }
 check "Android Studio starts and goes through Squid" studio_uses_proxy
 
+# The run above logged the plugins Studio loaded. Its log lives in a directory
+# named after Studio's version.
+studio_loaded_plugins() {
+  local loaded id name jar xml bad=0
+  loaded="$(grep -hs 'Loaded bundled plugins:' /var/home/dev/.cache/Google/*/log/idea.log)" ||
+    { echo "      no list of loaded plugins in Studio's log"; return 1; }
+  while read -r id _; do
+    xml=
+    for jar in "/usr/lib/android-studio/plugins/$id"/lib/*.jar; do
+      xml="$(unzip -p "$jar" META-INF/plugin.xml 2>/dev/null)" && break
+    done
+    name="$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' <<<"$xml" | head -n 1)"
+    [[ -n $name && $loaded == *" $name ("* ]] || { echo "      not loaded: $id (${name:-no name})"; bad=1; }
+  done < <(grep -vE '^\s*(#|$)' /usr/lib/android-dev-vm/studio-plugins.txt)
+  return "$bad"
+}
+check "Android Studio loaded the plugins in studio-plugins.txt" studio_loaded_plugins
+
+# Studio's first start above ran its own setup in the profile it made (the
+# dl.google.com tunnel). From the second start, /usr/bin/android-studio turns
+# on automatic plugin updates. --version starts nothing, but goes through it.
+studio_plugins_auto_update() {
+  as_dev /usr/bin/android-studio --version
+  ((rc == 0)) || { echo "      rc $rc: $out"; return 1; }
+  grep -qs '<option name="PLUGINS_AUTO_UPDATE" value="true" />' \
+    /var/home/dev/.config/Google/AndroidStudio*/options/updates.xml ||
+    { cat /var/home/dev/.config/Google/AndroidStudio*/options/updates.xml 2>&1 | indent; return 1; }
+}
+check "Android Studio updates plugins automatically for dev" studio_plugins_auto_update
+
+# Boxes (PLAN.md). run-vm.sh adds the virtio ports Boxes adds, so udev has
+# started spice-webdavd, and with it avahi, which must use lo alone.
+boxes_shared_folders() {
+  local unit ifaces
+  for unit in spice-webdavd.service avahi-daemon.service; do
+    systemctl is-active --quiet "$unit" ||
+      { systemctl status --no-pager "$unit" 2>&1 | indent; return 1; }
+  done
+  ifaces="$(journalctl -b -u avahi-daemon.service -o cat |
+    sed -n 's/^New relevant interface \([^ ]*\) for mDNS\.$/\1/p' | LC_ALL=C sort -u)"
+  [[ $ifaces == $'lo.IPv4\nlo.IPv6' ]] || { echo "      avahi's interfaces: ${ifaces//$'\n'/ }"; return 1; }
+}
+check "Boxes folder sharing: spice-webdavd runs, avahi only on lo" boxes_shared_folders
+
+# The clipboard bridge, run as dev in a headless KWin with its unit's command:
+# text copied on the Wayland side reaches X11, where spice-vdagent reads it.
+# Text an X11 client sets, as spice-vdagent does with the host's, reaches
+# Wayland, and the bridge doesn't take it back (it would echo to the host).
+boxes_clipboard() {
+  local script=/var/tmp/clipboard-check
+  cat >"$script" <<'EOF'
+#!/usr/bin/bash
+exec >"$0.out" 2>&1
+# Polls for up to 5 s.
+until_true() { local _; for _ in {1..50}; do "$@" && return; sleep 0.1; done; return 1; }
+x11_is() { [[ "$(xclip -selection clipboard -out 2>/dev/null; echo .)" == "$1." ]]; }
+wayland_is() { [[ "$(wl-paste --no-newline 2>/dev/null)" == "$1" ]]; }
+bridge="$(sed -n 's/^ExecStart=//p' /usr/lib/systemd/user/android-dev-clipboard.service)"
+$bridge &
+sleep 1
+wl-copy $'from wayland\n'
+until_true x11_is $'from wayland\n' && echo "to X11: ok" || echo "to X11: no"
+# -loops 0 is xclip's default, there to tell this one apart from the bridge's.
+printf 'from x11' | xclip -selection clipboard -in -loops 0 &
+until_true wayland_is 'from x11' && echo "to Wayland: ok" || echo "to Wayland: no"
+sleep 1
+pgrep -fx 'xclip -selection clipboard -in' >/dev/null && echo "taken back" || echo "not taken back: ok"
+EOF
+  chmod 755 "$script"
+  rm -f "$script.out"
+  dev_kwin clipboard-check "$script" --wait --property=RuntimeMaxSec=60 >/dev/null 2>&1
+  (("$(grep -c ': ok$' "$script.out" 2>/dev/null)" == 3)) || { indent <"$script.out" 2>&1; return 1; }
+}
+check "Boxes clipboard: Wayland text reaches X11, X11 text isn't echoed back" boxes_clipboard
+
+# user-tmpfiles.d/android-dev-vm.conf ran when dev's user manager started.
+emulator_defaults() {
+  cmp /usr/lib/android-dev-vm/emulator/advancedFeatures.ini /var/home/dev/.android/advancedFeatures.ini 2>&1 | indent
+}
+check "dev has the emulator defaults (Vulkan and GLDirectMem off)" emulator_defaults
+
 # Claude Code with no proxy in its environment: the managed settings alone
 # must send it through Squid, with no direct attempt. The VM has no login, so
 # a dummy key makes it call the API. The API refuses the key, and the tunnel
 # is what counts.
+# Runs `claude -p hi` as dev with an empty environment, and fails on a hang or
+# when it couldn't start.
+dev_claude() {
+  as_dev env -i HOME=/var/home/dev PATH=/usr/bin ANTHROPIC_API_KEY=dummy claude -p hi
+  ((rc != 124 && rc != 255)) || { echo "      rc $rc: $out"; return 1; }
+}
 claude_uses_proxy() {
   local tunnels stopped _
   tunnels="$(squid_tunnels api.anthropic.com:443)"
   stopped="$(dev_stopped_packets)"
-  as_dev env -i HOME=/var/home/dev PATH=/usr/bin ANTHROPIC_API_KEY=dummy claude -p hi
-  ((rc != 124 && rc != 255)) || { echo "      rc $rc: $out"; return 1; }
+  dev_claude || return 1
   (("$(dev_stopped_packets)" == stopped)) || { echo "      Claude Code tried direct connections"; return 1; }
   # Squid logs a tunnel when it closes.
   for _ in {1..10}; do
@@ -448,6 +555,25 @@ claude_uses_proxy() {
   return 1
 }
 check "Claude Code takes the proxy from its managed settings" claude_uses_proxy
+
+# The run above was dev's first, which registers the marketplace seeded in the
+# image (build_files/claude-plugins.sh) in the background. Its plugins load
+# from the next start on. They must load from the seed: Claude Code fetches
+# from GitHub, and keeps a copy in dev's own cache, when it misses one there.
+claude_seeded_plugins() {
+  local seed=/usr/lib/claude-code-plugins plugins=/var/home/dev/.claude/plugins location fetched copies bad=0
+  fetched="$(squid_tunnels github.com:443)"
+  dev_claude || return 1
+  # Squid logs a tunnel when it closes.
+  sleep 5
+  location="$(jq -r '.["claude-plugins-official"].installLocation' "$plugins/known_marketplaces.json" 2>&1)"
+  [[ $location == "$seed"/* ]] || { echo "      dev's marketplace: $location"; bad=1; }
+  (("$(squid_tunnels github.com:443)" == fetched)) || { echo "      Claude Code fetched from GitHub"; bad=1; }
+  copies="$(find "$plugins/cache" -mindepth 3 -maxdepth 3 2>/dev/null)"
+  [[ -z $copies ]] || { echo "      copies in dev's cache:"; indent <<<"$copies"; bad=1; }
+  return "$bad"
+}
+check "Claude Code loads its plugins from the image's seed" claude_seeded_plugins
 
 # DISABLE_UPDATES in the managed settings. Without it, `claude install` would
 # download a self-updating copy into dev's home, which comes first on PATH. A

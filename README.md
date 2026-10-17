@@ -9,8 +9,8 @@ How it differs from an ordinary desktop:
 - **Two accounts.** `dev` is for all your work, and Claude Code runs as `dev`.
   `admin` is for administration only. `dev` can never become root.
 - **A short list of websites.** `dev` reaches the internet only through a proxy
-  that allows a list of domains: Claude, the Android SDK, Gradle, Maven,
-  GitHub and a few more. [docs/security-model.md](docs/security-model.md)
+  that allows a list of domains: Claude, Google, Gradle, Maven, GitHub and a
+  few more. [docs/security-model.md](docs/security-model.md)
   says what that protects and what it doesn't.
 - **An image, not installed packages.** You don't install software into the
   system. Changes come as pull requests to this repository and reach the VM
@@ -59,6 +59,8 @@ workflow it runs.
    can delete the download afterwards.
 3. **Give it room.** At least 8 GB of memory (Android Studio and the emulator
    together need it) and 4 CPUs.
+4. **Turn on 3D acceleration** in the VM's settings in Boxes. The emulator
+   needs it.
 
 ## First boot
 
@@ -78,11 +80,38 @@ then shut the VM down and start it again.
 ## Daily use
 
 - **Android Studio** is in the application menu. Its setup wizard downloads
-  the SDK through the proxy. Google Play and other Google services in the
-  emulator don't work, because their domains aren't on the list.
+  the SDK through the proxy. It comes with the Claude Code, Flutter and Dart
+  plugins, and from its second start it updates its plugins on its own. The
+  Flutter SDK isn't included. All of Google's domains are on the list, so
+  Google Play in the emulator can work. If it needs others, run
+  `android-dev-denied` (below).
+- **The emulator.** When you create a virtual device in Studio's Device
+  Manager, set its graphics acceleration to Hardware (in Additional
+  settings). With the other settings it crashed at start.
 - **Claude Code.** Open a terminal and run `claude`. To sign in, it prints a
   link: open it in a browser **on your host**, sign in, and paste the code the
-  page shows back into the terminal (Boxes shares the clipboard).
+  page shows back into the terminal (Boxes shares the clipboard, both ways,
+  text only). Android Studio comes with Claude Code's plugin: run `claude` in
+  Studio's own terminal, or press Ctrl+Esc, and Claude's edits show up in
+  Studio's diff viewer, with your current selection as context.
+- **Claude's instructions come with the VM.** In every project, Claude Code
+  follows the VM's own `CLAUDE.md`: strict quality gates, a review before
+  every commit, and no installing on your phone without asking. Put a
+  project's commands and architecture in that project's `CLAUDE.md`. The VM
+  also brings the skills `/security-sweep`, `/quality-sweep`, `/ux-audit`
+  and `/emulator-test`, and the Context7 and Superpowers plugins, which
+  load from Claude Code's second start on.
+- **Context7 needs a one-time sign-in**, inside the VM, since it calls back
+  to Claude Code there. In `claude`, run `/mcp`, choose context7 and
+  authenticate: the VM's Firefox opens Context7's sign-in. Use an account
+  made for it, with email sign-in, not your GitHub or Google account, and
+  sign out of the site afterwards. If the page doesn't load, run
+  `android-dev-denied`.
+- **Shared folders.** In Boxes, open the VM's settings, then Devices &
+  Shares, and add a folder under Shared Folders. In the VM, open Dolphin,
+  press Ctrl+L, type `webdav://localhost:9843/` and press Enter. To keep it
+  in the sidebar, right-click it under the location bar and choose Add to
+  Places. Anything that runs as `dev` can read and change what you share.
 - **Don't sign in to accounts in the VM's Firefox**, GitHub above all: every
   process of `dev`, Claude Code included, could use that session (see
   [docs/security-model.md](docs/security-model.md)).
@@ -131,6 +160,9 @@ As `admin`:
   on it. Then report the problem.
 - **The first-boot questions don't appear** and the screen stays black: wait
   a minute.
+- **Boxes says "Redirection of USB device … failed"** when you attach a
+  phone: the host's file manager has the phone open for file transfer. Eject
+  it there first, then attach it to the VM again.
 
 ## For maintainers
 

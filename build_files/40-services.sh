@@ -4,21 +4,25 @@ set -euo pipefail
 
 # Image-owned enablement: symlinks in /usr, which neither `systemctl disable`
 # nor a preset reset can remove. See android-dev-firstboot.service's header.
+# wants TARGET UNIT [user]: a system unit, or with "user" a user unit.
 wants() {
-  mkdir -p "/usr/lib/systemd/system/$1.wants"
-  ln -s "../$2" "/usr/lib/systemd/system/$1.wants/$2"
+  local dir="/usr/lib/systemd/${3:-system}/$1.wants"
+  mkdir -p "$dir"
+  ln -s "../$2" "$dir/$2"
 }
 wants multi-user.target android-dev-firstboot.service
 wants sysinit.target dev-egress-firewall.service
 wants multi-user.target squid.service
+# Every user's graphical session. It checks for spice-vdagent itself.
+wants graphical-session.target android-dev-clipboard.service user
 # Kinoite ships the update timer but doesn't enable it. Its service only stages
 # updates here (see its drop-in).
 wants timers.target bootc-fetch-apply-updates.timer
 
 # plasma-setup: KDE's first-boot wizard, which creates its own admin user.
 #   android-dev-firstboot.service replaces it.
-# avahi, cups, geoclue: root daemons that reach the network on behalf of
-#   desktop users, outside dev's nftables rule. Not needed in this VM.
+# cups, geoclue: root daemons that reach the network on behalf of desktop
+#   users, outside dev's nftables rule. Not needed in this VM.
 # mcelog: machine checks belong to the host. On AMD hosts it fails at boot
 #   ("CPU is unsupported"), leaving the system degraded.
 # boot.automount: systemd-gpt-auto-generator's ESP automount, which ends up in
@@ -37,7 +41,6 @@ wants timers.target bootc-fetch-apply-updates.timer
 #   already, masked so it stays off.
 systemctl mask \
   plasma-setup.service \
-  avahi-daemon.service avahi-daemon.socket \
   cups.service cups.socket cups.path cups-browsed.service \
   geoclue.service \
   mcelog.service \
@@ -46,3 +49,9 @@ systemctl mask \
   systemd-nsresourced.service systemd-nsresourced.socket \
   systemd-mountfsd.service systemd-mountfsd.socket \
   polkit-agent-helper.socket
+
+# avahi: spice-webdavd requires it, and udev starts spice-webdavd when Boxes
+# shares a folder. Disabled otherwise (Fedora's preset enables it), which also
+# removes the alias D-Bus activation goes through. Its config (see its
+# drop-in) keeps it off the network either way.
+systemctl disable avahi-daemon.service avahi-daemon.socket

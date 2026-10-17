@@ -9,6 +9,19 @@
     "HTTP_PROXY": "http://127.0.0.1:3128",
     "HTTPS_PROXY": "http://127.0.0.1:3128",
     "NO_PROXY": "localhost,127.0.0.1,::1",
-    "JAVA_TOOL_OPTIONS": "-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=3128 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=3128 -Dhttp.nonProxyHosts=localhost|127.0.0.1|[::1]"
+    "JAVA_TOOL_OPTIONS": "-Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=3128 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=3128 -Dhttp.nonProxyHosts=localhost|127.0.0.1|[::1]",
+    "CLAUDE_CODE_PLUGIN_SEED_DIR": "/usr/lib/claude-code-plugins"
+  },
+  "extraKnownMarketplaces": {
+    "claude-plugins-official": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/anthropics/claude-plugins-official.git"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "context7@claude-plugins-official": true,
+    "superpowers@claude-plugins-official": true
   }
 }

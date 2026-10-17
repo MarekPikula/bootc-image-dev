@@ -5,6 +5,8 @@
 #   java-25-openjdk-devel: command-line Gradle. Android Studio brings its own
 #     runtime (also 25). Fedora 44 has no older JDK.
 #   git
+#   xclip: puts the Wayland clipboard on the X11 one, for spice-vdagent
+#     (system_files/usr/libexec/android-dev-vm/clipboard-to-x11).
 #   claude-code: from Anthropic's dnf repo, see below.
 # Already in Kinoite, and asserted by tests/image/checks.sh: bubblewrap and
 # socat, which Claude Code's optional sandbox needs.
@@ -19,7 +21,7 @@ set -euo pipefail
 # rpm -e, not dnf remove: it removes exactly these and fails if anything else
 # needs them, where dnf would quietly remove that too.
 rpm -e vpnc NetworkManager-vpnc plasma-nm-vpnc usermode open-vm-tools-desktop
-dnf -y install --setopt=install_weak_deps=False squid java-25-openjdk-devel git
+dnf -y install --setopt=install_weak_deps=False squid java-25-openjdk-devel git xclip
 
 # /var is state, created at boot by tmpfiles.d (CLAUDE.md). squid's own
 # tmpfiles.d creates /var/spool/squid. httpd-filesystem (a squid dependency)

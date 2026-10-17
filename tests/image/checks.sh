@@ -35,6 +35,31 @@ in_image() {
   podman exec -i "$ctr" /usr/bin/bash -euo pipefail -s
 }
 
+# Every ExecStart= command in the unit text on stdin, in order: an empty
+# ExecStart= clears the list.
+exec_starts() {
+  awk '/^ExecStart=/ { if ($0 == "ExecStart=") n = 0; else cmd[++n] = substr($0, 11) }
+    END { for (i = 1; i <= n; i++) print cmd[i] }'
+}
+
+# expect_exec_start UNIT COMMAND: with its drop-ins, UNIT runs COMMAND alone.
+expect_exec_start() {
+  local actual
+  actual="$(podman exec "$ctr" systemctl cat "$1" | exec_starts)"
+  [[ $actual == "$2" ]] || { echo "      ExecStart= lines:"; indent <<<"$actual"; return 1; }
+}
+
+# expect_unit_state STATE UNIT...: systemctl is-enabled says STATE for each.
+expect_unit_state() {
+  local state=$1 unit actual bad=0
+  shift
+  for unit; do
+    actual="$(podman exec "$ctr" systemctl is-enabled "$unit" 2>&1 || true)"
+    [[ $actual == "$state" ]] || { echo "      $unit: $actual"; bad=1; }
+  done
+  return "$bad"
+}
+
 # /sysroot is skipped: it holds the ostree repo's copies of the same files.
 privileged_files() {
   in_image <<'EOF'
@@ -172,23 +197,28 @@ check "setuid/setgid files and capabilities match tests/image/privileged-files.t
 # Every command the service would run, in order: an empty ExecStart= clears
 # the list. Without that line in the drop-in, Kinoite's own
 # `bootc upgrade --apply` would still run first and reboot.
-check "updates are staged, never applied with a reboot" in_image <<'EOF'
-exec_start="$(systemctl cat bootc-fetch-apply-updates.service | awk '
-  /^ExecStart=/ { if ($0 == "ExecStart=") n = 0; else cmd[++n] = substr($0, 11) }
-  END { for (i = 1; i <= n; i++) print cmd[i] }')"
-[[ $exec_start == "/usr/bin/bootc upgrade --quiet" ]] || { sed 's/^/      ExecStart=/' <<<"$exec_start"; exit 1; }
-EOF
+check "updates are staged, never applied with a reboot" \
+  expect_exec_start bootc-fetch-apply-updates.service "/usr/bin/bootc upgrade --quiet"
 check "our units are pulled in from /usr" in_image <<'EOF'
 bad=0
-for link in multi-user.target.wants/android-dev-firstboot.service \
-  sysinit.target.wants/dev-egress-firewall.service \
-  multi-user.target.wants/squid.service \
-  timers.target.wants/bootc-fetch-apply-updates.timer; do
-  [[ "$(readlink "/usr/lib/systemd/system/$link")" == "../${link#*/}" ]] ||
+for link in system/multi-user.target.wants/android-dev-firstboot.service \
+  system/sysinit.target.wants/dev-egress-firewall.service \
+  system/multi-user.target.wants/squid.service \
+  system/timers.target.wants/bootc-fetch-apply-updates.timer \
+  user/graphical-session.target.wants/android-dev-clipboard.service; do
+  [[ "$(readlink "/usr/lib/systemd/$link")" == "../${link##*/}" ]] ||
     { echo "      missing: $link"; bad=1; }
 done
 exit "$bad"
 EOF
+# The drop-in repeats Fedora's command to add --chrome=no, so a change to
+# Fedora's must show up here.
+firstboot_without_chrome() {
+  local fedora
+  fedora="$(podman exec "$ctr" cat /usr/lib/systemd/system/systemd-firstboot.service | exec_starts)"
+  expect_exec_start systemd-firstboot.service "$fedora --chrome=no"
+}
+check "systemd-firstboot runs Fedora's command, plus --chrome=no" firstboot_without_chrome
 # Under /usr/lib it would be lib_t and run as init_t, which may not run passwd.
 check "first-boot script is labelled bin_t (SELinux)" in_image <<'EOF'
 label="$(matchpathcon -n /usr/libexec/android-dev-vm/set-passwords)"
@@ -213,18 +243,26 @@ field="$(getent shadow root | cut -d: -f2)"
 [[ $field =~ ^[!*]+$ ]] || { echo "      root's shadow field: '$field'"; exit 1; }
 EOF
 # The list and the reasons are in build_files/40-services.sh.
-check "units that conflict with the VM's design are masked" in_image <<'EOF'
-bad=0
-for unit in plasma-setup.service avahi-daemon.service avahi-daemon.socket \
-  cups.service cups.socket cups.path cups-browsed.service geoclue.service \
-  mcelog.service boot.automount nftables.service \
+check "units that conflict with the VM's design are masked" expect_unit_state masked \
+  plasma-setup.service cups.service cups.socket cups.path cups-browsed.service \
+  geoclue.service mcelog.service boot.automount nftables.service \
   systemd-nsresourced.service systemd-nsresourced.socket \
-  systemd-mountfsd.service systemd-mountfsd.socket polkit-agent-helper.socket; do
-  state="$(systemctl is-enabled "$unit" 2>&1 || true)"
-  [[ $state == masked ]] || { echo "      $unit: $state"; bad=1; }
-done
-exit "$bad"
-EOF
+  systemd-mountfsd.service systemd-mountfsd.socket polkit-agent-helper.socket
+# avahi runs only when spice-webdavd needs it (40-services.sh), and then with
+# no network to use (its config). Disabled also means no D-Bus activation
+# alias: is-enabled counts it.
+avahi_contained() {
+  local conf=/usr/lib/android-dev-vm/avahi/avahi-daemon.conf fedora line bad=0
+  expect_unit_state disabled avahi-daemon.service avahi-daemon.socket || bad=1
+  # The drop-in repeats Fedora's command to add -f, as for systemd-firstboot.
+  fedora="$(podman exec "$ctr" cat /usr/lib/systemd/system/avahi-daemon.service | exec_starts)"
+  expect_exec_start avahi-daemon.service "$fedora -f $conf" || bad=1
+  for line in allow-interfaces=lo enable-wide-area=no enable-reflector=no; do
+    podman exec "$ctr" grep -qx "$line" "$conf" || { echo "      $conf: no $line"; bad=1; }
+  done
+  return "$bad"
+}
+check "avahi: disabled, on our config, with lo only and no wide-area DNS" avahi_contained
 
 # Network containment (CLAUDE.md): dev reaches the network only through Squid.
 # The rule matches UID 1500 only. A subordinate range would let dev run
@@ -267,23 +305,17 @@ check "Squid config parses without warnings (the image's squid)" in_image <<'EOF
 out="$(squid -k parse -f /usr/lib/android-dev-vm/squid/squid.conf 2>&1)"
 ! grep -E 'WARNING|ERROR|FATAL' <<<"$out" | sed 's/^/      /' | grep .
 EOF
-# Matches entries the way Squid's dstdomain does: every token on a line,
-# case-insensitive, a trailing dot ignored, a leading dot also matching
-# subdomains. So .com, .Google.com and .googleapis.com are all caught. IP
-# addresses are refused too: Squid would match a CONNECT to one listed here.
-check "allowlist has no IP addresses, and allows neither *.google.com nor storage.googleapis.com" in_image <<'EOF'
+# Squid would match a CONNECT to an IP address listed here, and a bare
+# top-level domain (.com) would allow everything under it. Every token on a
+# line counts, the way Squid's dstdomain reads them, a trailing dot ignored.
+check "allowlist has no IP addresses or bare top-level domains" in_image <<'EOF'
 awk '
-  function covers(entry, host) {
-    if (substr(entry, 1, 1) != ".") return entry == host
-    return host == substr(entry, 2) || substr("." host, length(host) + 2 - length(entry)) == entry
-  }
   /^[[:space:]]*(#|$)/ { next }
   {
     for (i = 1; i <= NF; i++) {
-      entry = tolower($i)
+      entry = $i
       sub(/\.$/, "", entry)
-      if (covers(entry, "any.google.com") || covers(entry, "storage.googleapis.com") ||
-        entry ~ /^\.?[0-9.]+$/ || entry ~ /:/) {
+      if (entry ~ /^\.?[0-9.]+$/ || entry ~ /:/ || entry ~ /^\.?[^.]+$/) {
         print "      line " NR ": " $0
         bad = 1
       }
@@ -309,10 +341,29 @@ EOF
 
 # Android tooling.
 check "Android Studio: launcher, desktop entry, platform updates off" in_image <<'EOF'
-[[ "$(readlink -f /usr/bin/android-studio)" == /usr/lib/android-studio/bin/studio ]]
+[[ "$(readlink -f /usr/bin/android-studio)" == /usr/libexec/android-dev-vm/android-studio ]]
 [[ -x /usr/lib/android-studio/bin/studio ]]
 desktop-file-validate /usr/share/applications/android-studio.desktop
 grep -qx 'ide.no.platform.update=true' /usr/lib/android-studio/bin/idea.properties
+EOF
+# Studio skips a plugin whose build range leaves out its build, without an
+# error. Builds compare part by part, and "*" in until-build matches any.
+check "Studio plugins: each one in studio-plugins.txt is installed, for this Studio's build" in_image <<'EOF'
+studio=/usr/lib/android-studio
+build="$(jq -r .buildNumber "$studio/product-info.json")"
+bad=0
+while read -r id _; do
+  xml=
+  for jar in "$studio/plugins/$id"/lib/*.jar; do
+    xml="$(unzip -p "$jar" META-INF/plugin.xml 2>/dev/null)" && break
+  done
+  [[ $xml == *"<id>$id</id>"* ]] || { echo "      $id: not installed"; bad=1; continue; }
+  since="$(sed -n 's/.*since-build="\([^"]*\)".*/\1/p' <<<"$xml")"
+  until="$(sed -n 's/.*until-build="\([^"]*\)".*/\1/p' <<<"$xml")"
+  [[ -n $since ]] && printf '%s\n' "$since" "$build" "${until:-999999}" | sed 's/\*/999999/g' | sort -VC ||
+    { echo "      $id: Studio $build, plugin wants ${since:-?} to ${until:-any}"; bad=1; }
+done < <(grep -vE '^\s*(#|$)' /usr/lib/android-dev-vm/studio-plugins.txt)
+exit "$bad"
 EOF
 # The tarball ships no desktop entry, so ours copies these from its
 # product-info.json, and a Studio update could change them.
@@ -369,18 +420,31 @@ claude --version | sed 's/^/      /'
 # either is missing; command -v only if both are.)
 type -P bwrap socat >/dev/null
 EOF
-# Claude Code reads managed settings from /etc/claude-code only:
-# managed-settings.json and a managed-settings.d/ drop-in directory. The image
-# ships our file there and nothing else. The file itself stays image-owned in
-# /usr. Its proxy settings must be exactly the ones in proxy.env.
-check "Claude Code: managed settings turn off updates and set dev's proxy" in_image <<'EOF'
-settings=/usr/lib/android-dev-vm/claude-code/managed-settings.json
+# Claude Code reads its managed files from /etc/claude-code only: settings
+# (managed-settings.json and a managed-settings.d/ drop-in directory),
+# CLAUDE.md, and skills, agents and more under .claude/. The image ships our
+# settings, CLAUDE.md and skills there and nothing else, as links to
+# image-owned files in /usr. The proxy settings must be exactly the ones in
+# proxy.env.
+check "Claude Code: managed settings turn off updates, set dev's proxy and enable the plugins" in_image <<'EOF'
+managed=/usr/lib/android-dev-vm/claude-code
+settings=$managed/managed-settings.json
 proxy_env=/usr/lib/android-dev-vm/proxy.env
-[[ "$(ls -A /etc/claude-code)" == managed-settings.json ]]
+[[ "$(cd /etc/claude-code && find . -mindepth 1 | LC_ALL=C sort | tr '\n' ' ')" == \
+  "./.claude ./.claude/skills ./CLAUDE.md ./managed-settings.json " ]]
 [[ "$(readlink -f /etc/claude-code/managed-settings.json)" == "$settings" ]]
+[[ "$(readlink -f /etc/claude-code/CLAUDE.md)" == "$managed/CLAUDE.md" ]]
+[[ "$(readlink -f /etc/claude-code/.claude/skills)" == "$managed/skills" ]]
 [[ "$(jq -r .env.DISABLE_UPDATES "$settings")" == 1 ]]
+[[ "$(jq -r .env.CLAUDE_CODE_PLUGIN_SEED_DIR "$settings")" == /usr/lib/claude-code-plugins ]]
+# A git source over HTTPS: for a "github" one, Claude Code tries SSH first,
+# which dev's rule refuses (seen in a VM).
+jq -e '.extraKnownMarketplaces["claude-plugins-official"].source ==
+    {source: "git", url: "https://github.com/anthropics/claude-plugins-official.git"} and
+  (.enabledPlugins | length > 0 and all(keys[]; endswith("@claude-plugins-official")))' \
+  "$settings" >/dev/null
 names="$(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$proxy_env" | sort)"
-in_settings="$(jq -r '.env | keys[] | select(startswith("DISABLE_") | not)' "$settings" | sort)"
+in_settings="$(jq -r '.env | keys[] | select(startswith("DISABLE_") or startswith("CLAUDE_CODE_") | not)' "$settings" | sort)"
 [[ $in_settings == "$names" ]] ||
   { echo "      variables differ from proxy.env:"; diff <(echo "$names") <(echo "$in_settings") | sed 's/^/        /'; exit 1; }
 bad=0
@@ -391,6 +455,24 @@ for name in $names; do
 done
 exit "$bad"
 EOF
+
+# build_files/claude-plugins.sh: every enabled plugin is in the seed, in the
+# directory Claude Code looks for at runtime (its commit's first 12 characters).
+check "Claude Code: the plugin seed holds every enabled plugin, under its commit" in_image <<'EOF'
+settings=/usr/lib/android-dev-vm/claude-code/managed-settings.json
+seed="$(jq -r .env.CLAUDE_CODE_PLUGIN_SEED_DIR "$settings")"
+bad=0
+for plugin in $(jq -r '.enabledPlugins | keys[]' "$settings"); do
+  read -r sha path < <(jq -r --arg p "$plugin" '.plugins[$p][0] | "\(.gitCommitSha) \(.installPath)"' "$seed/installed_plugins.json")
+  [[ $path == "$seed/cache/"*"/${sha:0:12}" && -d $path ]] || { echo "      $plugin: $path"; bad=1; }
+done
+exit "$bad"
+EOF
+# The image's instructions for every project (PLAN.md, Claude Code). Claude
+# Code ignores files it can't parse or doesn't look for without a word, so this
+# runs it and reads what it sends.
+check "Claude Code: sends the managed CLAUDE.md and every managed skill" \
+  in_image <tests/image/claude-context.sh
 
 # disk/build-qcow2.sh passes no --filesystem: Kinoite names no default, so the
 # image's install config has to.

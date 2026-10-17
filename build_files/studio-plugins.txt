@@ -1,0 +1,14 @@
+# Plugins the image adds to Android Studio, one per line:
+#   <plugin ID> <SHA-256 of the zip> <download URL>
+# From the plugin's JetBrains Marketplace page, Versions: take the newest
+# version whose range includes the image's Studio build, and its Download link.
+# The image checks fail if a range leaves out Studio's build.
+
+# Claude Code [Beta]: https://plugins.jetbrains.com/plugin/27310-claude-code-beta-
+com.anthropic.code.plugin bac67aaf4619ace1113dfecc3bc6aaf5c014db9c9682039ae9abcd106c338096 https://downloads.marketplace.jetbrains.com/files/27310/907737/claude-code-jetbrains-plugin-0.1.14-beta.zip
+
+# Flutter, and Dart, which it needs:
+# https://plugins.jetbrains.com/plugin/9212-flutter
+# https://plugins.jetbrains.com/plugin/6351-dart
+io.flutter 5151b653554c32db43f43bafd692a8ee27a8155b7ed139670fb4a85d6f9d87f5 https://downloads.marketplace.jetbrains.com/files/9212/1185468/Flutter-97.0.0-f40026e.zip
+Dart a1dd765172ffe273e90b70cbf379e85ccc98a53631ec23bb1488f804ea69433e https://downloads.marketplace.jetbrains.com/files/6351/1185467/Dart-510.0.0-0f4b93d.zip

@@ -1,0 +1,11 @@
+# Started with every graphical session (build_files/40-services.sh).
+[Unit]
+Description=Copy the Wayland clipboard to X11, for spice-vdagent
+# spice-vdagent's own condition: the system daemon runs only in a SPICE VM.
+ConditionPathExists=/run/spice-vdagentd/spice-vdagent-sock
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/wl-paste --type text --watch /usr/libexec/android-dev-vm/clipboard-to-x11
+Restart=on-failure
