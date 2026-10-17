@@ -420,6 +420,9 @@ studio_uses_proxy() {
   # Then a little longer, for the marketplace and docs requests.
   ((ok == 0)) && sleep 30
   systemctl --user -M dev@ stop studio-check.service 2>/dev/null
+  # Squid logs a tunnel when it closes, and a connection Studio kept open
+  # closes only now.
+  ((ok == 0)) || { sleep 5; (("$(squid_tunnels dl.google.com:443)" > tunnels)) && ok=0; }
   ((ok == 0)) || { echo "      no tunnel to dl.google.com within 3 minutes"; return 1; }
   (("$(dev_stopped_packets)" == stopped)) || { echo "      Studio tried direct connections"; return 1; }
   refused="$(tail -n "+$((log_lines + 1))" /var/log/squid/access.log |
