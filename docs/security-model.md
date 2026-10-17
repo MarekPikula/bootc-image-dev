@@ -83,15 +83,18 @@ These are known and accepted for now. Some have a planned fix.
   zones.
 - **Allowlisted hosts that accept uploads.** `github.com`,
   `*.githubusercontent.com`, the Anthropic API and claude.ai can all carry
-  data out, for example as a push to any GitHub repository. So can, with an
+  data out, for example as a push to any GitHub repository. So can all of
+  Google, which is allowed whole: Cloud Storage (`storage.googleapis.com`,
+  where a signed URL lets anyone upload to a bucket, with no account in the
+  VM), Drive, Apps Script and every other Google API. So can, with an
   account, JetBrains' plugin marketplace, the Gradle Plugin Portal
   (`plugins.gradle.org`) and addons.mozilla.org. Planned: narrow the
   GitHub hosts once we know which ones builds need.
 - **Domain fronting.** Squid checks only the name in the CONNECT request,
   not the TLS server name or `Host` header inside the tunnel. A shared front
-  end behind an allowlisted name (Google's for `dl.google.com`, the GitHub
-  CDN) might route the tunnel to a service that isn't allowlisted. Whether it
-  does depends on the provider.
+  end behind an allowlisted name (the GitHub CDN, for example) might route
+  the tunnel to a service that isn't allowlisted. Whether it does depends on
+  the provider.
 - **Logins in dev's session.** Whatever `dev` is signed in to, every process
   of `dev` can use, Claude Code included: Claude Code's own token, and any
   web session in dev's Firefox. Sign in to Claude Code from a browser on the
@@ -112,7 +115,8 @@ These are known and accepted for now. Some have a planned fix.
   device if the VM has one, all bypass the network. They are under the
   control of whoever runs the VM on the host.
 - **The emulator.** Android guests in the emulator get only HTTPS, through
-  the proxy, to allowlisted domains, so the Play Store and similar don't work.
+  the proxy, to allowlisted domains. Google's are, so the Play Store may
+  work, but anything it needs from other domains is refused.
 - **admin.** admin's traffic isn't filtered. admin must not give `dev`
   subordinate UIDs (`usermod --add-subuids`): processes under those UIDs
   aren't matched by the rule. systemd-nsresourced and systemd-mountfsd, which

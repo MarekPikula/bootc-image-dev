@@ -168,13 +168,20 @@ README.md                  for the people running the VM
     domains were denied.
   - `android-dev-denied` summarises them.
 - **Allowlist.** `squid/allowlist.txt` is the list, with a comment per group:
-  Claude, the Android SDK and Google's Maven repository, Android Studio
+  Claude, Google, Android Studio
   (Google's download CDN, developer.android.com, JetBrains' plugin
   marketplace), Gradle and its toolchain resolver, Maven Central and JitPack,
   GitHub, Google's static files and fonts for docs pages, and Firefox's
   remote settings and add-ons.
-  - `.gvt1.com` is the broadest entry: Google's download CDN serves far more
-    than Android tooling, but only downloads.
+  - `.google.com` and `.googleapis.com` are the broadest entries, allowed
+    whole on purpose. The Android SDK, Google's Maven repository, the
+    Flutter SDK (`storage.googleapis.com`), Google Play in the emulator and
+    Google sign-in all live there, and listing hosts one by one made every
+    new Google tool a firewall exception. The price: Cloud Storage, Drive,
+    Apps Script and the rest of Google's APIs can carry data out
+    (`docs/security-model.md`), which is no worse than GitHub.
+  - `.gvt1.com`: Google's download CDN serves far more than Android tooling,
+    but only downloads.
   - Claude Code's own updates need nothing extra, because the binary comes
     from the image.
   - Gradle distributions and toolchain JDKs come from GitHub.
@@ -203,7 +210,7 @@ README.md                  for the people running the VM
       request to Mozilla's suggestion service (`merino.services.mozilla.com`)
       and the page's third-party content: analytics
       (`www.googletagmanager.com`) and Google's sign-in widget
-      (`apis.google.com`).
+      (`apis.google.com`, allowed since with all of Google).
 
 ### Proxy configuration for dev
 
@@ -267,8 +274,6 @@ README.md                  for the people running the VM
   interactive start used `api.anthropic.com`, `platform.claude.com` and
   `raw.githubusercontent.com` (the changelog), and made no direct attempt.
   Not allowlisted, so these don't work:
-  - `storage.googleapis.com`: install counts in `/plugin` (CLAUDE.md rules
-    it out).
   - `registry.npmjs.org`: plugins and MCP servers that come from npm.
   - `*.frame.claudeusercontent.com`: reading artifacts.
   - `bridge.claudeusercontent.com`: Claude in Chrome (there's no Chrome).
@@ -280,16 +285,16 @@ README.md                  for the people running the VM
 - **Signing in** happens in a browser on the host, for the reason in
   `docs/security-model.md` ("Logins in dev's session"). In dev's Firefox it
   doesn't work anyway: the sign-in page needs `*.hcaptcha.com` for email
-  sign-in and `accounts.google.com` for Google sign-in, and neither is
-  allowlisted.
+  sign-in, which isn't allowlisted. Google sign-in needs
+  `accounts.google.com`, which is, but it hasn't been tried.
 
 ### Studio plugins
 
 - **Which.** Claude Code [Beta] (Anthropic, marketplace ID 27310), Flutter
   (Google, 9212) and Dart (JetBrains, 6351), which Flutter needs. The
-  Flutter plugin needs a Flutter SDK, which isn't in the image: its
+  Flutter plugin needs a Flutter SDK, which isn't in the image. Its
   releases and its Android build artifacts come from
-  `storage.googleapis.com`, which CLAUDE.md rules out.
+  `storage.googleapis.com`, which is allowlisted.
 - **Install.** `build_files/studio-plugins.txt` pins each release zip by ID,
   sha256 and URL.
   `studio-plugins.sh` checks each hash and that the zip holds the plugin
@@ -589,7 +594,7 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries and no IP addresses, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
@@ -629,9 +634,8 @@ VM test assertions (`tests/vm/checks.sh`):
     bubblewrap user namespace too.
   - dev through the proxy, with a clean login environment (profile.d):
     `https://dl.google.com` and `https://api.anthropic.com` get CONNECT 200,
-    and `https://example.com` gets 403, which `android-dev-denied` lists.
-    `www.google.com` and `storage.googleapis.com` get 403 too, which also
-    catches an ACL added elsewhere in `squid.conf`.
+    `https://storage.googleapis.com` gets 200 too (the Flutter SDK), and
+    `https://example.com` gets 403, which `android-dev-denied` lists.
   - dev's systemd --user environment has the proxy variables and
     `JAVA_TOOL_OPTIONS`, parsed whole from the generator.
 - **Android tooling.**

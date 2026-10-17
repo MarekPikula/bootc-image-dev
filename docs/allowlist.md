@@ -35,8 +35,9 @@ header sums up these rules.
   it only when the hosts vary (CDN shards, for example) and all of them belong
   to the same service. Don't also list a subdomain it already covers: Squid
   warns about the overlap, and CI fails on any Squid warning.
-- **Never `.google.com` or `storage.googleapis.com`.** They front far too much,
-  and CI fails if any entry covers them.
+- **Google is already in whole** (`.google.com` and `.googleapis.com`), so a
+  Google host needs no entry of its own. Its CDNs and other domains
+  (`gstatic.com`, `googleusercontent.com` and so on) still do.
 - **Mind the uploads.** A host that accepts uploads from anyone with an
   account is a way for data to leave the VM. Several already are
   ([docs/security-model.md](security-model.md)). Add another only when the
