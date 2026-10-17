@@ -533,7 +533,7 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries, the rule and Squid are enabled from `/usr`, user sessions require the rule, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service ends up running `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries and no IP addresses, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
@@ -549,8 +549,9 @@ VM test assertions (`tests/vm/checks.sh`):
     `plymouth-quit.service` times out, and the first-boot unit starts after
     that unit.
   - dev: `sudo`, `run0` and `pkexec` are denied (non-zero, no hang waiting for
-    a password), `su` is refused before any prompt, and `pkcheck` on a real
-    dev process says no to managing units.
+    a password, and run0 and pkexec say polkit refused, not that nobody
+    answered a prompt), `su` is refused before any prompt, and `pkcheck` on a
+    real dev process says no to managing units.
   - The only sshd socket is the test's own (`ssh.listen`), none from
     systemd-ssh-generator's automatic ones.
   - In an active local session for dev (on tty8), polkit says `YES` to
@@ -559,6 +560,9 @@ VM test assertions (`tests/vm/checks.sh`):
     nested virtualization the node still exists (udev `static_node`) but the
     open fails with a different error, which the check accepts.
 - **Network containment.**
+  - Everything listening matches a reviewed list (resolved's stub, chronyd's
+    command port, Squid and the test's sshd), since dev reaches all of it
+    over loopback.
   - The rule is loaded and survives `firewall-cmd --reload`.
   - Control: root can connect directly, which proves the negative checks
     below actually test something.
@@ -570,6 +574,8 @@ VM test assertions (`tests/vm/checks.sh`):
   - dev through the proxy, with a clean login environment (profile.d):
     `https://dl.google.com` and `https://api.anthropic.com` get CONNECT 200,
     and `https://example.com` gets 403, which `android-dev-denied` lists.
+    `www.google.com` and `storage.googleapis.com` get 403 too, which also
+    catches an ACL added elsewhere in `squid.conf`.
   - dev's systemd --user environment has the proxy variables and
     `JAVA_TOOL_OPTIONS`, parsed whole from the generator.
 - **Android tooling.**
@@ -583,7 +589,7 @@ VM test assertions (`tests/vm/checks.sh`):
   managed settings) and makes no direct attempt. What Squid refuses isn't
   asserted: the version isn't pinned, and a new release that asks for one
   more host shouldn't block the weekly build.
-- **Updates.** The timer is active and its service runs
+- **Updates.** The timer is active and its service runs exactly one command,
   `bootc upgrade --quiet`, and `/boot` isn't an automount.
 
 The test harness reaches the guest over SSH without shipping any test users or
@@ -597,6 +603,10 @@ keys in the image:
     through the `/root` symlink before `/var/roothome` exists.
   - `ssh.ephemeral-authorized_keys-all` is refused by SELinux
     (`sshd-session` may not read `/run/credentials`).
+- The checks are copied into the guest and run with no stdin, so a check
+  that reads stdin can't swallow the rest of the script. ssh keepalives and
+  a timeout on waiting for boot to finish make a stuck guest fail the run
+  with its logs.
 - The connection goes through a qemu user-net port forward. The VM boots with
   UEFI (OVMF) from a throwaway overlay, so the qcow2 stays untouched.
 - First-boot prompts are skipped with credentials too: `firstboot.locale`,

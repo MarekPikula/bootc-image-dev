@@ -73,7 +73,9 @@ f~ /var/roothome/.ssh/authorized_keys 0600 root root - $(base64 -w0 "$work/key.p
 qemu_pid="$(cat "$work/qemu.pid")"
 
 # LogLevel stays out of ssh_opts: ssh keeps the first value it's given.
+# ServerAlive: a guest that stops answering fails the run within a minute.
 ssh_opts=(-i "$work/key" -p "$port" -o BatchMode=yes -o ConnectTimeout=5
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=4
   -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
 guest() {
   ssh "${ssh_opts[@]}" -o LogLevel=ERROR root@127.0.0.1 "$@"
@@ -92,8 +94,11 @@ until guest true 2>/dev/null; do
 done
 echo "run-vm: guest is up after ${SECONDS}s"
 
+# Copied first and run with no stdin: a check that reads stdin would otherwise
+# swallow the rest of the script, and bash would exit 0 without running it.
 rc=0
-cat tests/lib.sh tests/vm/checks.sh | guest bash -uo pipefail -s || rc=$?
+cat tests/lib.sh tests/vm/checks.sh | guest 'cat >/run/vm-checks.sh'
+guest bash -uo pipefail /run/vm-checks.sh </dev/null || rc=$?
 
 guest journalctl -b --no-pager >"$logs/journal.txt" 2>&1 || true
 guest systemctl poweroff 2>/dev/null || true

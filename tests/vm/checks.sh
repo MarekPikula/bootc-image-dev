@@ -19,7 +19,9 @@ as_dev() {
 # Boot.
 boot_finished() {
   local state
-  state="$(systemctl is-system-running --wait)"
+  # A unit waiting on the console (a first-boot prompt nobody answers) fails
+  # this instead of running into the CI step's timeout, which loses the logs.
+  state="$(timeout 300 systemctl is-system-running --wait)"
   [[ $state == running ]] || {
     echo "      state: $state"
     systemctl --failed --no-legend | indent
@@ -114,20 +116,25 @@ check "root is still locked after first boot" root_locked
 # dev's privileges.
 
 # Passes if dev is denied: a non-zero exit that isn't a setpriv failure or a
-# hang (a hang would mean it's waiting for a password).
+# hang (a hang would mean it's waiting for a password), with output that
+# matches $1. polkit's NO reads differently from a prompt nobody answered
+# ("Interactive authentication required", "No authentication agent found").
+# sudo -n says the same either way, so the image checks cover sudoers.
 dev_denied() {
+  local want=$1
+  shift
   as_dev "$@"
   case $rc in
     0) echo "      $* succeeded as dev" ;;
     124) echo "      $* hung for 30 s" ;;
     255) echo "      $out" ;;
-    *) return 0 ;;
+    *) [[ $out == *"$want"* ]] && return 0 || echo "      rc $rc: $out" ;;
   esac
   return 1
 }
-check "dev: sudo is denied" dev_denied sudo -n true
-check "dev: run0 is denied" dev_denied run0 true
-check "dev: pkexec is denied" dev_denied pkexec true
+check "dev: sudo is denied" dev_denied "a password is required" sudo -n true
+check "dev: run0 is denied" dev_denied "Access denied" run0 true
+check "dev: pkexec is denied" dev_denied "Not authorized" pkexec true
 
 # Also tested in the image, but here PAM runs under SELinux enforcing.
 su_refused() {
@@ -175,9 +182,9 @@ org.freedesktop.login1.inhibit-handle-reboot-key
 org.freedesktop.login1.inhibit-handle-suspend-key
 org.freedesktop.login1.power-off
 org.freedesktop.login1.reboot
+org.freedesktop.login1.set-wall-message
 org.freedesktop.login1.suspend
 org.freedesktop.udisks2.eject-media
-org.freedesktop.login1.set-wall-message
 org.freedesktop.udisks2.filesystem-mount"
 polkit_in_session() {
   local pid session action rc yes="" bad=0
@@ -231,10 +238,38 @@ check "dev may open /dev/kvm (mode 0666)" dev_kvm
 
 # Network containment.
 
+# Every listening socket, as "protocol address process". dev reaches all of them
+# over loopback, so a new one gets reviewed here (docs/security-model.md,
+# Services on loopback). Port 22 is the test's own sshd. Squid's UDP sockets
+# on random ports are its DNS client. Runs before anything dev starts.
+expected_listeners="tcp 0.0.0.0:22 systemd
+tcp 127.0.0.1:3128 squid
+tcp 127.0.0.53%lo:53 systemd-resolve
+tcp 127.0.0.54:53 systemd-resolve
+udp 127.0.0.1:323 chronyd
+udp 127.0.0.53%lo:53 systemd-resolve
+udp 127.0.0.54:53 systemd-resolve
+udp [::1]:323 chronyd"
+listeners() {
+  ss -Hlntup | awk '{
+    match($0, /users:\(\("[^"]+"/)
+    p = substr($0, RSTART + 9, RLENGTH - 10)
+    if (!($1 == "udp" && p == "squid")) print $1, $5, p
+  }' | LC_ALL=C sort -u
+}
+listeners_reviewed() {
+  diff <(echo "$expected_listeners") <(listeners) | indent
+}
+check "only the reviewed services listen" listeners_reviewed
+
 # firewalld owns only its own table, so a reload must leave ours alone.
+# Listed first, then matched: grep -q at the end of a pipeline can kill nft
+# with SIGPIPE, which pipefail turns into a failure.
 egress_rule_loaded() {
-  firewall-cmd --reload >/dev/null &&
-    nft list chain inet dev_egress output | grep -q 'meta skuid 1500 counter'
+  local chain
+  firewall-cmd --reload >/dev/null || return 1
+  chain="$(nft list chain inet dev_egress output)" || return 1
+  [[ $chain == *"meta skuid 1500 "*counter* ]] || { indent <<<"$chain"; return 1; }
 }
 check "dev's egress rule is loaded and survives a firewalld reload" egress_rule_loaded
 
@@ -265,7 +300,7 @@ dev_stopped_packets() {
 dev_blocked() {
   local before
   before="$(dev_stopped_packets)"
-  dev_denied bash -c "$1" || return 1
+  dev_denied "" bash -c "$1" || return 1
   (("$(dev_stopped_packets)" > before)) || { echo "      not stopped by the rule: $out"; return 1; }
 }
 check "dev: direct TCP over IPv4 is blocked" dev_blocked 'exec 3<>/dev/tcp/1.1.1.1/443'
@@ -295,6 +330,10 @@ via_proxy() {
 check "dev: dl.google.com through Squid" via_proxy dl.google.com 200
 check "dev: api.anthropic.com through Squid" via_proxy api.anthropic.com 200
 check "dev: example.com refused by Squid (403)" via_proxy example.com 403
+# Never allowed (CLAUDE.md). The image checks read allowlist.txt, this also
+# catches an ACL added elsewhere in squid.conf.
+check "dev: www.google.com refused by Squid (403)" via_proxy www.google.com 403
+check "dev: storage.googleapis.com refused by Squid (403)" via_proxy storage.googleapis.com 403
 check "dev: IP literals refused by Squid (403)" via_proxy 1.1.1.1 403
 check "dev: ports other than 443 refused by Squid (403)" via_proxy dl.google.com:8443 403
 
@@ -426,7 +465,9 @@ check "dev: claude install doesn't install its own copy" claude_no_own_copy
 updates_stage_only() {
   local exec_start
   exec_start="$(systemctl show -p ExecStart --value bootc-fetch-apply-updates.service)"
-  [[ $exec_start == *"argv[]=/usr/bin/bootc upgrade --quiet ;"* ]] ||
+  # Exactly one command, so no `bootc upgrade --apply` runs before it.
+  [[ $exec_start != *"argv[]="*"argv[]="* &&
+    $exec_start == *"argv[]=/usr/bin/bootc upgrade --quiet ;"* ]] ||
     { echo "      ExecStart: $exec_start"; return 1; }
   systemctl is-active --quiet bootc-fetch-apply-updates.timer ||
     { echo "      timer: $(systemctl is-active bootc-fetch-apply-updates.timer)"; return 1; }

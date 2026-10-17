@@ -23,8 +23,11 @@ expect_meta() {
 ctr="$(podman run -d --rm --network=none "$image" sleep infinity)"
 trap 'podman rm -f -t 0 "$ctr" >/dev/null || true' EXIT
 # Captured before sysusers runs: the image itself must not carry the accounts.
-shipped_accounts="$(podman exec "$ctr" grep -hE '^(admin|dev):' \
-  /etc/passwd /etc/shadow /etc/group /usr/lib/passwd /usr/lib/group || true)"
+# grep exits 1 for no match, which is the expected case, and 2 if it couldn't
+# read a file, which must not pass as "no accounts".
+shipped_accounts="$(podman exec "$ctr" sh -c 'grep -hE "^(admin|dev):" \
+  /etc/passwd /etc/shadow /etc/group /usr/lib/passwd /usr/lib/group; [ $? -le 1 ]')" ||
+  { echo "can't read the image's account files" >&2; exit 1; }
 out="$(podman exec "$ctr" systemd-sysusers 2>&1)" || { echo "$out" >&2; exit 1; }
 
 # Runs the bash script on stdin inside the image.
@@ -166,9 +169,14 @@ check "setuid/setgid files and capabilities match tests/image/privileged-files.t
   expect_privileged_files
 
 # Units.
+# Every command the service would run, in order: an empty ExecStart= clears
+# the list. Without that line in the drop-in, Kinoite's own
+# `bootc upgrade --apply` would still run first and reboot.
 check "updates are staged, never applied with a reboot" in_image <<'EOF'
-exec_start="$(systemctl cat bootc-fetch-apply-updates.service | sed -n 's/^ExecStart=//p' | tail -n 1)"
-[[ $exec_start == "/usr/bin/bootc upgrade --quiet" ]] || { echo "      ExecStart=$exec_start"; exit 1; }
+exec_start="$(systemctl cat bootc-fetch-apply-updates.service | awk '
+  /^ExecStart=/ { if ($0 == "ExecStart=") n = 0; else cmd[++n] = substr($0, 11) }
+  END { for (i = 1; i <= n; i++) print cmd[i] }')"
+[[ $exec_start == "/usr/bin/bootc upgrade --quiet" ]] || { sed 's/^/      ExecStart=/' <<<"$exec_start"; exit 1; }
 EOF
 check "our units are pulled in from /usr" in_image <<'EOF'
 bad=0
@@ -236,10 +244,18 @@ config="$(systemctl cat systemd-user-sessions.service)"
 grep -qx 'Requires=dev-egress-firewall.service' <<<"$config"
 grep -qx 'After=dev-egress-firewall.service' <<<"$config"
 EOF
+# At boot /run/nologin comes from systemd's tmpfiles entry, and only
+# systemd-user-sessions removes it. Without the entry a rule that failed to
+# load would leave nothing to refuse logins. (No grep -q: under pipefail, its
+# early exit could fail the pipeline.)
+check "fail closed: /run/nologin is created at boot" in_image <<'EOF'
+systemd-tmpfiles --cat-config | grep -E '^f\+?!? +/run/nologin ' >/dev/null
+EOF
 # Without the rule, /run/nologin stays. It only helps where PAM checks it.
-check "fail closed: pam_nologin guards plasmalogin, login and sshd" in_image <<'EOF'
+check "fail closed: pam_nologin guards the login screen, login and sshd" in_image <<'EOF'
 bad=0
-for stack in /usr/lib/pam.d/plasmalogin /etc/pam.d/login /etc/pam.d/sshd; do
+for stack in /usr/lib/pam.d/plasmalogin /usr/lib/pam.d/plasmalogin-autologin \
+  /etc/pam.d/login /etc/pam.d/sshd; do
   grep -qE '^account\s+required\s+pam_nologin\.so' "$stack" ||
     { echo "      no pam_nologin: $stack"; bad=1; }
 done

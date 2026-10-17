@@ -100,7 +100,7 @@ These are known and accepted for now. Some have a planned fix.
   the VM. Don't sign in to other accounts in dev's Firefox.
 - **Services on loopback.** The rule allows all loopback traffic, so `dev`
   reaches any local service, not only Squid. Today the ones that matter are
-  Squid and the DNS stub.
+  Squid and the DNS stub. The VM test fails when a new one starts listening.
 - **Root-side services.** Daemons such as NetworkManager, PackageKit, the
   flatpak system helper and fwupd connect on their own. polkit stops `dev`
   from changing their settings or installing anything, but some read-only
