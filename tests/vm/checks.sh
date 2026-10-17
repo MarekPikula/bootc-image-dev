@@ -431,6 +431,24 @@ studio_uses_proxy() {
 }
 check "Android Studio starts and goes through Squid" studio_uses_proxy
 
+# The run above logged the plugins Studio loaded. Its log lives in a directory
+# named after Studio's version.
+studio_loaded_plugins() {
+  local loaded id name jar xml bad=0
+  loaded="$(grep -hs 'Loaded bundled plugins:' /var/home/dev/.cache/Google/*/log/idea.log)" ||
+    { echo "      no list of loaded plugins in Studio's log"; return 1; }
+  while read -r id _; do
+    xml=
+    for jar in "/usr/lib/android-studio/plugins/$id"/lib/*.jar; do
+      xml="$(unzip -p "$jar" META-INF/plugin.xml 2>/dev/null)" && break
+    done
+    name="$(sed -n 's:.*<name>\(.*\)</name>.*:\1:p' <<<"$xml" | head -n 1)"
+    [[ -n $name && $loaded == *" $name ("* ]] || { echo "      not loaded: $id (${name:-no name})"; bad=1; }
+  done < <(grep -vE '^\s*(#|$)' /usr/lib/android-dev-vm/studio-plugins.txt)
+  return "$bad"
+}
+check "Android Studio loaded the plugins in studio-plugins.txt" studio_loaded_plugins
+
 # Claude Code with no proxy in its environment: the managed settings alone
 # must send it through Squid, with no direct attempt. The VM has no login, so
 # a dummy key makes it call the API. The API refuses the key, and the tunnel

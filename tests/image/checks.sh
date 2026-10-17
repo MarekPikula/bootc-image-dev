@@ -314,6 +314,25 @@ check "Android Studio: launcher, desktop entry, platform updates off" in_image <
 desktop-file-validate /usr/share/applications/android-studio.desktop
 grep -qx 'ide.no.platform.update=true' /usr/lib/android-studio/bin/idea.properties
 EOF
+# Studio skips a plugin whose build range leaves out its build, without an
+# error. Builds compare part by part, and "*" in until-build matches any.
+check "Studio plugins: each one in studio-plugins.txt is installed, for this Studio's build" in_image <<'EOF'
+studio=/usr/lib/android-studio
+build="$(jq -r .buildNumber "$studio/product-info.json")"
+bad=0
+while read -r id _; do
+  xml=
+  for jar in "$studio/plugins/$id"/lib/*.jar; do
+    xml="$(unzip -p "$jar" META-INF/plugin.xml 2>/dev/null)" && break
+  done
+  [[ $xml == *"<id>$id</id>"* ]] || { echo "      $id: not installed"; bad=1; continue; }
+  since="$(sed -n 's/.*since-build="\([^"]*\)".*/\1/p' <<<"$xml")"
+  until="$(sed -n 's/.*until-build="\([^"]*\)".*/\1/p' <<<"$xml")"
+  [[ -n $since ]] && printf '%s\n' "$since" "$build" "${until:-999999}" | sed 's/\*/999999/g' | sort -VC ||
+    { echo "      $id: Studio $build, plugin wants ${since:-?} to ${until:-any}"; bad=1; }
+done < <(grep -vE '^\s*(#|$)' /usr/lib/android-dev-vm/studio-plugins.txt)
+exit "$bad"
+EOF
 # The tarball ships no desktop entry, so ours copies these from its
 # product-info.json, and a Studio update could change them.
 check "Android Studio: desktop entry matches product-info.json" in_image <<'EOF'
