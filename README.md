@@ -9,8 +9,8 @@ How it differs from an ordinary desktop:
 - **Two accounts.** `dev` is for all your work, and Claude Code runs as `dev`.
   `admin` is for administration only. `dev` can never become root.
 - **A short list of websites.** `dev` reaches the internet only through a proxy
-  that allows a list of domains: Claude, the Android SDK, Gradle, Maven,
-  GitHub and a few more. [docs/security-model.md](docs/security-model.md)
+  that allows a list of domains: Claude, Google, Gradle, Maven, GitHub and a
+  few more. [docs/security-model.md](docs/security-model.md)
   says what that protects and what it doesn't.
 - **An image, not installed packages.** You don't install software into the
   system. Changes come as pull requests to this repository and reach the VM
@@ -80,8 +80,9 @@ then shut the VM down and start it again.
 - **Android Studio** is in the application menu. Its setup wizard downloads
   the SDK through the proxy. It comes with the Claude Code, Flutter and Dart
   plugins, and from its second start it updates its plugins on its own. The
-  Flutter SDK isn't included. Google Play and other Google services in the
-  emulator don't work, because their domains aren't on the list.
+  Flutter SDK isn't included. All of Google's domains are on the list, so
+  Google Play in the emulator can work. If it needs others, run
+  `android-dev-denied` (below).
 - **Claude Code.** Open a terminal and run `claude`. To sign in, it prints a
   link: open it in a browser **on your host**, sign in, and paste the code the
   page shows back into the terminal (Boxes shares the clipboard). Android

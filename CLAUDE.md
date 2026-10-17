@@ -31,8 +31,8 @@ questions. Read it before starting work, and update it when a decision changes.
   - Containment fails closed: if the rule doesn't load, users can't log in.
   - Squid on `127.0.0.1:3128`, using a `dstdomain -n` allowlist and CONNECT to
     port 443 only, is `dev`'s only way out.
-  - Keep allowlist entries narrow. Never allow `.google.com` or
-    `storage.googleapis.com`.
+  - Keep allowlist entries narrow. `.google.com` and `.googleapis.com` are
+    the exception, allowed whole (see PLAN.md).
   - Every change to the allowlist goes through a PR.
 - **Updates:** automatic update checks stage a new image and never reboot on
   their own. The `bootc-fetch-apply-updates.service` drop-in runs

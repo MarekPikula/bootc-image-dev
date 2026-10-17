@@ -329,11 +329,9 @@ via_proxy() {
 }
 check "dev: dl.google.com through Squid" via_proxy dl.google.com 200
 check "dev: api.anthropic.com through Squid" via_proxy api.anthropic.com 200
+# Through .googleapis.com: the Flutter SDK's downloads.
+check "dev: storage.googleapis.com through Squid" via_proxy storage.googleapis.com 200
 check "dev: example.com refused by Squid (403)" via_proxy example.com 403
-# Never allowed (CLAUDE.md). The image checks read allowlist.txt, this also
-# catches an ACL added elsewhere in squid.conf.
-check "dev: www.google.com refused by Squid (403)" via_proxy www.google.com 403
-check "dev: storage.googleapis.com refused by Squid (403)" via_proxy storage.googleapis.com 403
 check "dev: IP literals refused by Squid (403)" via_proxy 1.1.1.1 403
 check "dev: ports other than 443 refused by Squid (403)" via_proxy dl.google.com:8443 403
 

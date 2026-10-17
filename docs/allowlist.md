@@ -30,19 +30,20 @@ one of those needs another way, so open an issue instead.
 One entry per line, under a comment saying what the group is for. The file's
 header sums up these rules.
 
-- **An exact host** (`maven.google.com`) allows only that name. Prefer it.
+- **An exact host** (`api.foojay.io`) allows only that name. Prefer it.
 - **A leading dot** (`.gradle.org`) allows the domain and every subdomain. Use
   it only when the hosts vary (CDN shards, for example) and all of them belong
   to the same service. Don't also list a subdomain it already covers: Squid
   warns about the overlap, and CI fails on any Squid warning.
-- **Never `.google.com` or `storage.googleapis.com`.** They front far too much,
-  and CI fails if any entry covers them.
+- **Google is already in whole** (`.google.com` and `.googleapis.com`), so a
+  Google host needs no entry of its own. Its CDNs and other domains
+  (`gstatic.com`, `googleusercontent.com` and so on) still do.
 - **Mind the uploads.** A host that accepts uploads from anyone with an
   account is a way for data to leave the VM. Several already are
   ([docs/security-model.md](security-model.md)). Add another only when the
   work can't do without it, and say so in the PR.
 
-To catch both CI failures before pushing, build and run the image checks
+To catch these CI failures before pushing, build and run the image checks
 locally (see the README's "For maintainers").
 
 ## 3. Open a pull request

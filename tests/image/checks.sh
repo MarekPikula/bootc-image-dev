@@ -267,29 +267,31 @@ check "Squid config parses without warnings (the image's squid)" in_image <<'EOF
 out="$(squid -k parse -f /usr/lib/android-dev-vm/squid/squid.conf 2>&1)"
 ! grep -E 'WARNING|ERROR|FATAL' <<<"$out" | sed 's/^/      /' | grep .
 EOF
-# Matches entries the way Squid's dstdomain does: every token on a line,
-# case-insensitive, a trailing dot ignored, a leading dot also matching
-# subdomains. So .com, .Google.com and .googleapis.com are all caught. IP
-# addresses are refused too: Squid would match a CONNECT to one listed here.
-check "allowlist has no IP addresses, and allows neither *.google.com nor storage.googleapis.com" in_image <<'EOF'
+# Squid would match a CONNECT to an IP address listed here, and a bare
+# top-level domain (.com) would allow everything under it. Every token on a
+# line counts, the way Squid's dstdomain reads them, a trailing dot ignored.
+check "allowlist has no IP addresses or bare top-level domains" in_image <<'EOF'
 awk '
-  function covers(entry, host) {
-    if (substr(entry, 1, 1) != ".") return entry == host
-    return host == substr(entry, 2) || substr("." host, length(host) + 2 - length(entry)) == entry
-  }
   /^[[:space:]]*(#|$)/ { next }
   {
     for (i = 1; i <= NF; i++) {
-      entry = tolower($i)
+      entry = $i
       sub(/\.$/, "", entry)
-      if (covers(entry, "any.google.com") || covers(entry, "storage.googleapis.com") ||
-        entry ~ /^\.?[0-9.]+$/ || entry ~ /:/) {
+      if (entry ~ /^\.?[0-9.]+$/ || entry ~ /:/ || entry ~ /^\.?[^.]+$/) {
         print "      line " NR ": " $0
         bad = 1
       }
     }
   }
   END { exit bad }' /usr/lib/android-dev-vm/squid/allowlist.txt
+EOF
+# A leading dot allows a whole domain, so each one is a decision of its own
+# (PLAN.md, Allowlist): adding one means adding it here too.
+check "allowlist: no wildcard domains beyond the reviewed ones" in_image <<'EOF'
+expected=".addons.mozilla.org .anthropic.com .claude.ai .claude.com .githubusercontent.com .google.com .googleapis.com .gradle.org .gvt1.com"
+actual="$(awk '!/^[[:space:]]*(#|$)/ { for (i = 1; i <= NF; i++) if ($i ~ /^\./) print tolower($i) }' \
+  /usr/lib/android-dev-vm/squid/allowlist.txt | LC_ALL=C sort | tr '\n' ' ')"
+[[ $actual == "$expected " ]] || { echo "      wildcards: $actual"; exit 1; }
 EOF
 check "proxy settings: dev gets them, admin doesn't" in_image <<'EOF'
 env_of() {
