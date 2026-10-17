@@ -28,7 +28,7 @@ versions.env               build inputs: base image tag, Android Studio URL + sh
                            Claude Code's dnf repo and signing-key fingerprint
 build_files/
   packages.sh              every package install, in one layer before COPY system_files/
-                           (see the Containerfile): squid, JDK 25, git, Claude Code
+                           (see the Containerfile): squid, JDK 25, git, xclip, Claude Code
   claude-code.asc          Anthropic's public signing key for the claude-code repo
   android-studio.sh        download, sha256 check, unpack to /usr/lib/android-studio, updates
                            off. Its own RUN, see the Containerfile
@@ -51,6 +51,7 @@ system_files/              overlay copied to / (paths below are relative to /)
     avahi/avahi-daemon.conf        lo only, no wide-area DNS: only for spice-webdavd
   usr/libexec/android-dev-vm/
     set-passwords          first-boot prompt (bin_t, so it may run passwd)
+    clipboard-to-x11       puts the Wayland clipboard's text on X11's, for spice-vdagent
   usr/lib/systemd/system/
     dev-egress-firewall.service
     systemd-user-sessions.service.d/10-dev-egress.conf
@@ -66,6 +67,7 @@ system_files/              overlay copied to / (paths below are relative to /)
   usr/lib/bootc/kargs.d/10-console.toml   serial console too, for headless logs
   usr/lib/bootc/kargs.d/10-ssh.toml       no automatic sshd sockets (systemd.ssh_auto=no)
   usr/lib/systemd/resolved.conf.d/10-android-dev-vm.conf   LLMNR off
+  usr/lib/systemd/user/android-dev-clipboard.service   runs clipboard-to-x11 in every graphical session
   usr/lib/bootc/install/50-android-dev-vm.toml   bootc install defaults (btrfs root)
   usr/lib/systemd/user-environment-generators/60-dev-proxy
   usr/share/polkit-1/rules.d/00-android-dev.rules
@@ -337,6 +339,19 @@ What GNOME Boxes gives the VM over SPICE, and what the VM does to use it.
     spice-webdavd starts and keeps running, and listens on 127.0.0.1 only.
   - It stays disabled. That also removes the alias that D-Bus activation
     goes through, so no other client can start it.
+- **Clipboard.** spice-vdagent is an X11 client, and KWin hands the Wayland
+  clipboard to X11 only while an X11 window has focus. So text came from
+  the host but didn't go back (seen in Boxes).
+  - `android-dev-clipboard.service`, a user unit, starts with the graphical
+    session when spice-vdagent's daemon runs. It watches the Wayland
+    clipboard with `wl-paste --watch` and puts each new text on the X11 one
+    with `xclip` (added to the image), where spice-vdagent sends it on.
+  - It skips text that X11 already holds, which is how text from the host
+    arrives, so nothing echoes back.
+  - Seen in a headless KWin: text copied on the Wayland side reaches X11,
+    trailing newlines included, and text an X11 client sets (as
+    spice-vdagent does) reaches Wayland without the bridge taking it over.
+  - Text only: images copied in the VM don't reach the host.
 
 ### Privilege
 
@@ -618,9 +633,9 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. The clipboard bridge's user unit is pulled in from `/usr`. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
-| Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, a shared folder in Dolphin, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
+| Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, a shared folder in Dolphin, text copied both ways, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
 VM test assertions (`tests/vm/checks.sh`):
 
@@ -675,6 +690,9 @@ VM test assertions (`tests/vm/checks.sh`):
   (`org.spice-space.webdav.0` and `com.redhat.spice.0`), with nothing on the
   other end, so their services start as they would in Boxes.
   - spice-webdavd and avahi run, and avahi's only interface is `lo`.
+  - The clipboard bridge, run as dev in a headless KWin: text copied on the
+    Wayland side reaches X11, and text an X11 client sets reaches Wayland
+    without the bridge taking it back.
 - **Claude Code.** Run as dev with an empty environment and a dummy API key,
   it calls `api.anthropic.com` through Squid (so the proxy came from the
   managed settings) and makes no direct attempt. What Squid refuses isn't

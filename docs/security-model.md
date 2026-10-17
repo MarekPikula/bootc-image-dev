@@ -116,8 +116,9 @@ These are known and accepted for now. Some have a planned fix.
   (SPICE), USB devices passed through to the VM (phones over adb, or a
   Bluetooth adapter, which `dev` may use without asking polkit), and a vsock
   device if the VM has one, all bypass the network. They are under the
-  control of whoever runs the VM on the host. A shared folder is open to
-  `dev` for reading and writing.
+  control of whoever runs the VM on the host. Text copied in the VM, by any
+  process of `dev`'s, lands on the host's clipboard, and a shared folder is
+  open to `dev` for reading and writing.
 - **The emulator.** Android guests in the emulator get only HTTPS, through
   the proxy, to allowlisted domains. Google's are, so the Play Store may
   work, but anything it needs from other domains is refused.

@@ -401,15 +401,22 @@ squid_tunnels() {
 # (Studio takes the proxy from JAVA_TOOL_OPTIONS), with no direct attempt, and
 # in that first minute Squid must refuse nothing it asks for except its
 # plain-HTTP connectivity check (HTTPS only, see squid.conf).
+# dev_kwin NAME SESSION [systemd-run options]: runs SESSION as dev in a
+# headless KWin with Xwayland, as dev's user unit NAME.
+dev_kwin() {
+  local name=$1 session=$2
+  shift 2
+  systemctl start user@1500.service
+  systemd-run -M dev@ --user --unit="$name" --collect --quiet "$@" \
+    kwin_wayland --virtual --xwayland --socket="$name" --exit-with-session="$session"
+}
+
 studio_uses_proxy() {
   local tunnels stopped log_lines refused _ ok=1
   tunnels="$(squid_tunnels dl.google.com:443)"
   stopped="$(dev_stopped_packets)"
   log_lines="$(wc -l </var/log/squid/access.log)"
-  systemctl start user@1500.service
-  systemd-run -M dev@ --user --unit=studio-check --collect --quiet \
-    kwin_wayland --virtual --xwayland --socket=studio-check \
-    --exit-with-session=/usr/bin/android-studio ||
+  dev_kwin studio-check /usr/bin/android-studio ||
     { echo "      couldn't start Studio's unit"; return 1; }
   for _ in {1..36}; do
     (("$(squid_tunnels dl.google.com:443)" > tunnels)) && { ok=0; break; }
@@ -479,6 +486,42 @@ boxes_shared_folders() {
   [[ $ifaces == $'lo.IPv4\nlo.IPv6' ]] || { echo "      avahi's interfaces: ${ifaces//$'\n'/ }"; return 1; }
 }
 check "Boxes folder sharing: spice-webdavd runs, avahi only on lo" boxes_shared_folders
+
+# The clipboard bridge, run as dev in a headless KWin with its unit's command:
+# text copied on the Wayland side reaches X11, where spice-vdagent reads it.
+# Text an X11 client sets, as spice-vdagent does with the host's, reaches
+# Wayland, and the bridge doesn't take it back (it would echo to the host).
+# Text marked sensitive stays on the Wayland side.
+boxes_clipboard() {
+  local script=/var/tmp/clipboard-check
+  cat >"$script" <<'EOF'
+#!/usr/bin/bash
+exec >"$0.out" 2>&1
+# Polls for up to 5 s.
+until_true() { local _; for _ in {1..50}; do "$@" && return; sleep 0.1; done; return 1; }
+x11_is() { [[ "$(xclip -selection clipboard -out 2>/dev/null; echo .)" == "$1." ]]; }
+wayland_is() { [[ "$(wl-paste --no-newline 2>/dev/null)" == "$1" ]]; }
+bridge="$(sed -n 's/^ExecStart=//p' /usr/lib/systemd/user/android-dev-clipboard.service)"
+$bridge &
+sleep 1
+wl-copy $'from wayland\n'
+until_true x11_is $'from wayland\n' && echo "to X11: ok" || echo "to X11: no"
+# -loops 0 is xclip's default, there to tell this one apart from the bridge's.
+printf 'from x11' | xclip -selection clipboard -in -loops 0 &
+until_true wayland_is 'from x11' && echo "to Wayland: ok" || echo "to Wayland: no"
+sleep 1
+pgrep -fx 'xclip -selection clipboard -in' >/dev/null && echo "taken back" || echo "not taken back: ok"
+# A password manager's copy is marked sensitive and must stay in the VM.
+wl-copy --sensitive 'a secret'
+sleep 1
+[[ "$(xclip -selection clipboard -out 2>/dev/null)" != 'a secret' ]] && echo "sensitive kept: ok" || echo "sensitive reached X11"
+EOF
+  chmod 755 "$script"
+  rm -f "$script.out"
+  dev_kwin clipboard-check "$script" --wait --property=RuntimeMaxSec=60 >/dev/null 2>&1
+  (("$(grep -c ': ok$' "$script.out" 2>/dev/null)" == 4)) || { indent <"$script.out" 2>&1; return 1; }
+}
+check "Boxes clipboard: Wayland text reaches X11, X11 text isn't echoed back" boxes_clipboard
 
 # Claude Code with no proxy in its environment: the managed settings alone
 # must send it through Squid, with no direct attempt. The VM has no login, so

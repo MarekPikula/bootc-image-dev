@@ -85,10 +85,10 @@ then shut the VM down and start it again.
   `android-dev-denied` (below).
 - **Claude Code.** Open a terminal and run `claude`. To sign in, it prints a
   link: open it in a browser **on your host**, sign in, and paste the code the
-  page shows back into the terminal (Boxes shares the clipboard). Android
-  Studio comes with Claude Code's plugin: run `claude` in Studio's own
-  terminal, or press Ctrl+Esc, and Claude's edits show up in Studio's diff
-  viewer, with your current selection as context.
+  page shows back into the terminal (Boxes shares the clipboard, both ways,
+  text only). Android Studio comes with Claude Code's plugin: run `claude` in
+  Studio's own terminal, or press Ctrl+Esc, and Claude's edits show up in
+  Studio's diff viewer, with your current selection as context.
 - **Shared folders.** In Boxes, open the VM's settings, then Devices &
   Shares, and add a folder under Shared Folders. In the VM, open Dolphin,
   press Ctrl+L, type `webdav://localhost:9843/` and press Enter. To keep it

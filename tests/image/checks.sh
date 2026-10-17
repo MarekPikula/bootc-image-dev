@@ -201,11 +201,12 @@ check "updates are staged, never applied with a reboot" \
   expect_exec_start bootc-fetch-apply-updates.service "/usr/bin/bootc upgrade --quiet"
 check "our units are pulled in from /usr" in_image <<'EOF'
 bad=0
-for link in multi-user.target.wants/android-dev-firstboot.service \
-  sysinit.target.wants/dev-egress-firewall.service \
-  multi-user.target.wants/squid.service \
-  timers.target.wants/bootc-fetch-apply-updates.timer; do
-  [[ "$(readlink "/usr/lib/systemd/system/$link")" == "../${link#*/}" ]] ||
+for link in system/multi-user.target.wants/android-dev-firstboot.service \
+  system/sysinit.target.wants/dev-egress-firewall.service \
+  system/multi-user.target.wants/squid.service \
+  system/timers.target.wants/bootc-fetch-apply-updates.timer \
+  user/graphical-session.target.wants/android-dev-clipboard.service; do
+  [[ "$(readlink "/usr/lib/systemd/$link")" == "../${link##*/}" ]] ||
     { echo "      missing: $link"; bad=1; }
 done
 exit "$bad"

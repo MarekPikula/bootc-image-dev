@@ -4,13 +4,17 @@ set -euo pipefail
 
 # Image-owned enablement: symlinks in /usr, which neither `systemctl disable`
 # nor a preset reset can remove. See android-dev-firstboot.service's header.
+# wants TARGET UNIT [user]: a system unit, or with "user" a user unit.
 wants() {
-  mkdir -p "/usr/lib/systemd/system/$1.wants"
-  ln -s "../$2" "/usr/lib/systemd/system/$1.wants/$2"
+  local dir="/usr/lib/systemd/${3:-system}/$1.wants"
+  mkdir -p "$dir"
+  ln -s "../$2" "$dir/$2"
 }
 wants multi-user.target android-dev-firstboot.service
 wants sysinit.target dev-egress-firewall.service
 wants multi-user.target squid.service
+# Every user's graphical session. It checks for spice-vdagent itself.
+wants graphical-session.target android-dev-clipboard.service user
 # Kinoite ships the update timer but doesn't enable it. Its service only stages
 # updates here (see its drop-in).
 wants timers.target bootc-fetch-apply-updates.timer
