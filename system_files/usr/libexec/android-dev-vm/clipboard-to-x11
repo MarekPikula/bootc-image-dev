@@ -1,0 +1,23 @@
+#!/usr/bin/bash
+# wl-paste --watch runs this (android-dev-clipboard.service) with the new text
+# of the Wayland clipboard on stdin, and it puts that text on the X11 one,
+# where spice-vdagent, an X11 client, sends it to the host. KWin copies the
+# Wayland clipboard to X11 only while an X11 window has focus, so without
+# this, copying from the VM to the host would work only from X11 apps.
+set -euo pipefail
+
+# The dot keeps trailing newlines, which $(...) would drop.
+text="$(cat; echo .)"
+text="${text%.}"
+[[ -n $text ]] || exit 0
+# Text from the host comes the other way, X11 to Wayland, and lands here too.
+# X11 already holds it then, and taking it over would echo it to the host.
+# xclip fails when X11's clipboard is empty, and then this takes it. If the
+# owner doesn't answer in time (124), it's left alone.
+rc=0
+current="$(timeout 2 xclip -selection clipboard -out 2>/dev/null && echo .)" || rc=$?
+((rc != 124)) || exit 0
+[[ $rc != 0 || ${current%.} != "$text" ]] || exit 0
+# xclip stays in the background and serves the text until something else
+# takes the clipboard.
+printf %s "$text" | xclip -selection clipboard -in
