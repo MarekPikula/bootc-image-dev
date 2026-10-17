@@ -534,12 +534,17 @@ check "dev has the emulator defaults (Vulkan and GLDirectMem off)" emulator_defa
 # must send it through Squid, with no direct attempt. The VM has no login, so
 # a dummy key makes it call the API. The API refuses the key, and the tunnel
 # is what counts.
+# Runs `claude -p hi` as dev with an empty environment, and fails on a hang or
+# when it couldn't start.
+dev_claude() {
+  as_dev env -i HOME=/var/home/dev PATH=/usr/bin ANTHROPIC_API_KEY=dummy claude -p hi
+  ((rc != 124 && rc != 255)) || { echo "      rc $rc: $out"; return 1; }
+}
 claude_uses_proxy() {
   local tunnels stopped _
   tunnels="$(squid_tunnels api.anthropic.com:443)"
   stopped="$(dev_stopped_packets)"
-  as_dev env -i HOME=/var/home/dev PATH=/usr/bin ANTHROPIC_API_KEY=dummy claude -p hi
-  ((rc != 124 && rc != 255)) || { echo "      rc $rc: $out"; return 1; }
+  dev_claude || return 1
   (("$(dev_stopped_packets)" == stopped)) || { echo "      Claude Code tried direct connections"; return 1; }
   # Squid logs a tunnel when it closes.
   for _ in {1..10}; do
@@ -550,6 +555,25 @@ claude_uses_proxy() {
   return 1
 }
 check "Claude Code takes the proxy from its managed settings" claude_uses_proxy
+
+# The run above was dev's first, which registers the marketplace seeded in the
+# image (build_files/claude-plugins.sh) in the background. Its plugins load
+# from the next start on. They must load from the seed: Claude Code fetches
+# from GitHub, and keeps a copy in dev's own cache, when it misses one there.
+claude_seeded_plugins() {
+  local seed=/usr/lib/claude-code-plugins plugins=/var/home/dev/.claude/plugins location fetched copies bad=0
+  fetched="$(squid_tunnels github.com:443)"
+  dev_claude || return 1
+  # Squid logs a tunnel when it closes.
+  sleep 5
+  location="$(jq -r '.["claude-plugins-official"].installLocation' "$plugins/known_marketplaces.json" 2>&1)"
+  [[ $location == "$seed"/* ]] || { echo "      dev's marketplace: $location"; bad=1; }
+  (("$(squid_tunnels github.com:443)" == fetched)) || { echo "      Claude Code fetched from GitHub"; bad=1; }
+  copies="$(find "$plugins/cache" -mindepth 3 -maxdepth 3 2>/dev/null)"
+  [[ -z $copies ]] || { echo "      copies in dev's cache:"; indent <<<"$copies"; bad=1; }
+  return "$bad"
+}
+check "Claude Code loads its plugins from the image's seed" claude_seeded_plugins
 
 # DISABLE_UPDATES in the managed settings. Without it, `claude install` would
 # download a self-updating copy into dev's home, which comes first on PATH. A

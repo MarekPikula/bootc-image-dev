@@ -86,7 +86,8 @@ These are known and accepted for now. Some have a planned fix.
   data out, for example as a push to any GitHub repository. So can all of
   Google, which is allowed whole: Cloud Storage (`storage.googleapis.com`,
   where a signed URL lets anyone upload to a bucket, with no account in the
-  VM), Drive, Apps Script and every other Google API. So can, with an
+  VM), Drive, Apps Script and every other Google API. So can Context7
+  (`mcp.context7.com`), whose MCP server takes free-text queries. So can, with an
   account, JetBrains' plugin marketplace, the Gradle Plugin Portal
   (`plugins.gradle.org`) and addons.mozilla.org. Planned: narrow the
   GitHub hosts once we know which ones builds need.
@@ -100,7 +101,11 @@ These are known and accepted for now. Some have a planned fix.
   web session in dev's Firefox. Sign in to Claude Code from a browser on the
   host: it prints a URL, and the page gives a code to paste back. That keeps
   the claude.ai web session, which reaches far more than the token, out of
-  the VM. Don't sign in to other accounts in dev's Firefox.
+  the VM. Don't sign in to other accounts in dev's Firefox. The exception is
+  Context7, whose sign-in has to happen in the VM (the callback goes to
+  Claude Code on the VM's loopback): use an account made for it, with email
+  sign-in, not GitHub or Google, and sign out of the site in Firefox
+  afterwards. Claude Code keeps only Context7's token.
 - **Services on loopback.** The rule allows all loopback traffic, so `dev`
   reaches any local service, not only Squid. Today the ones that matter are
   Squid, the DNS stub and, while Boxes shares a folder, spice-webdavd, which
@@ -131,7 +136,8 @@ These are known and accepted for now. Some have a planned fix.
 - **Studio plugins update themselves** from the JetBrains Marketplace, into
   dev's profile. A plugin runs as `dev`, so a bad release from a plugin's
   vendor would run there without anyone reviewing it, the same as one
-  installed by hand.
+  installed by hand. Claude Code's plugins don't: the image brings them,
+  pinned, and they change only through a PR.
 - **Image trust.** Images aren't signed yet. VMs accept whatever reaches the
   `stable` tag on GHCR over TLS, so anyone who can push there, a workflow run
   with `packages: write` or the repository owner's credentials, controls

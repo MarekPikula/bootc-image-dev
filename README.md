@@ -99,7 +99,14 @@ then shut the VM down and start it again.
   every commit, and no installing on your phone without asking. Put a
   project's commands and architecture in that project's `CLAUDE.md`. The VM
   also brings the skills `/security-sweep`, `/quality-sweep`, `/ux-audit`
-  and `/emulator-test`.
+  and `/emulator-test`, and the Context7 and Superpowers plugins, which
+  load from Claude Code's second start on.
+- **Context7 needs a one-time sign-in**, inside the VM, since it calls back
+  to Claude Code there. In `claude`, run `/mcp`, choose context7 and
+  authenticate: the VM's Firefox opens Context7's sign-in. Use an account
+  made for it, with email sign-in, not your GitHub or Google account, and
+  sign out of the site afterwards. If the page doesn't load, run
+  `android-dev-denied`.
 - **Shared folders.** In Boxes, open the VM's settings, then Devices &
   Shares, and add a folder under Shared Folders. In the VM, open Dolphin,
   press Ctrl+L, type `webdav://localhost:9843/` and press Enter. To keep it

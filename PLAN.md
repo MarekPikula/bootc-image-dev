@@ -23,9 +23,10 @@ constraints that don't change.
 ## Repository layout
 
 ```
-Containerfile              FROM kinoite:44; RUN android-studio.sh; RUN packages.sh; RUN studio-plugins.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint --fatal-warnings
+Containerfile              FROM kinoite:44; RUN android-studio.sh; RUN packages.sh; RUN studio-plugins.sh; RUN claude-plugins.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint --fatal-warnings
 versions.env               build inputs: base image tag, Android Studio URL + sha256,
-                           Claude Code's dnf repo and signing-key fingerprint
+                           Claude Code's dnf repo and signing-key fingerprint,
+                           the plugin marketplace's commit
 build_files/
   packages.sh              every package install, in one layer before COPY system_files/
                            (see the Containerfile): squid, JDK 25, git, Claude Code
@@ -35,6 +36,8 @@ build_files/
   studio-plugins.txt       Studio's plugins (Claude Code, Flutter, Dart): ID, sha256, URL
   studio-plugins.sh        download, sha256 check, unpack each into Studio's plugins
                            directory. Its own RUN too
+  claude-plugins.sh        seeds Claude Code's plugins at the pinned marketplace commit
+                           into /usr/lib/claude-code-plugins. Its own RUN too
   build.sh                 runs the numbered steps in order
   15-su.sh                 su for wheel only (pam_wheel requisite)
   16-polkit-helper.sh      polkit's password helper for wheel only (4750 root:wheel)
@@ -81,7 +84,7 @@ system_files/              overlay copied to / (paths below are relative to /)
   etc/xdg/kioslaverc
   usr/lib/android-dev-vm/firefox/policies.json   Firefox policy: background services off
   etc/firefox/policies/policies.json             symlink to it, where Firefox looks first
-  usr/lib/android-dev-vm/claude-code/managed-settings.json   updates off, dev's proxy
+  usr/lib/android-dev-vm/claude-code/managed-settings.json   updates off, dev's proxy, plugins
   usr/lib/android-dev-vm/claude-code/CLAUDE.md   instructions for every project
   usr/lib/android-dev-vm/claude-code/skills/     security-sweep, quality-sweep, ux-audit, emulator-test
   etc/claude-code/managed-settings.json          symlink to it, the only place Claude Code reads
@@ -307,6 +310,46 @@ README.md                  for the people running the VM
     loopback and check that the request carries the managed CLAUDE.md and
     every skill's name. That catches a path or format Claude Code doesn't
     pick up, which it ignores without a word.
+- **Plugins.** The managed settings add Anthropic's official marketplace
+  (`anthropics/claude-plugins-official` on GitHub) and enable two plugins
+  from it, which users can't turn off. The image seeds both.
+  - Context7: documentation lookup through its hosted MCP server.
+  - Superpowers: skills for planning, test-driven development, debugging
+    and review. It lives in its own GitHub repository, and the marketplace
+    pins the commit.
+  - **Why a seed.** Claude Code installs a managed plugin from inside the
+    marketplace's repository (Context7) by itself, but skips one from
+    another repository ("External plugin … not in cache, skipping", seen in
+    a VM). A seed also keeps them reviewed: they change only through a PR
+    that bumps `CLAUDE_PLUGINS_COMMIT` in `versions.env`, like Studio's.
+  - **Build.** `build_files/claude-plugins.sh`, before `system_files/`
+    (whose managed settings would send claude to the VM's proxy), seeds
+    `/usr/lib/claude-code-plugins` with the marketplace at the pinned commit
+    and every plugin in `enabledPlugins`, and fails unless each came from
+    the commit it should. It names each plugin's directory after its
+    commit, which is what Claude Code looks up at runtime: `claude plugin
+    install` names it after the manifest's version, and on that miss
+    Claude Code downloaded its own copy of Superpowers into dev's home
+    (seen in a VM). It also makes the seed the same on every build of a
+    commit, so its layer only changes with a bump.
+  - **Runtime.** `CLAUDE_CODE_PLUGIN_SEED_DIR` in the managed settings'
+    `env` points at it. Claude Code never writes to or updates a seed. It
+    registers the seed at a user's first start, once it reaches the API
+    (not offline, nor with a fake API), and the plugins load from the
+    second start on (seen in a VM). A writable copy of the seed was
+    ignored, so it seems to want it read-only, which `/usr` is.
+  - The marketplace is a `git` source with the HTTPS URL. With a `github`
+    source, Claude Code tries SSH first, and dev's rule refuses that (seen
+    in a VM).
+  - **Context7's sign-in.** Its server refuses anonymous clients (401),
+    though the marketplace says otherwise. It wants an OAuth sign-in (or an
+    API key, which the image can't ship) through `clerk.context7.com`,
+    `accounts.context7.com` and `context7.com`, behind Cloudflare's
+    Turnstile (`challenges.cloudflare.com`). The allowlist names those and
+    `mcp.context7.com`, and dev signs in once from `/mcp`, in the VM's
+    Firefox (README). Turnstile blocks a scripted sign-in, so the full flow
+    is a manual test. Context7's queries are free text, so it's one more
+    host that can carry data out (`docs/security-model.md`).
 - **Sandbox.** Claude Code's optional Bash sandbox needs bubblewrap and
   socat. Both come with Kinoite, and the image checks assert they're there.
   bubblewrap isn't setuid. It uses user namespaces, where dev's sockets
@@ -564,8 +607,9 @@ What GNOME Boxes gives the VM over SPICE, and what the VM does to use it.
   newer image again.
 - **Weekly rebuild.** The CI rebuild picks up the current Kinoite 44 image and
   the current `claude-code` RPM from the stable channel.
-- **Other bumps.** Android Studio and the Fedora major version change through
-  PRs that edit `versions.env`, Studio's plugins through PRs that edit
+- **Other bumps.** Android Studio, the Fedora major version and Claude Code's
+  plugins (`CLAUDE_PLUGINS_COMMIT`) change through PRs that edit
+  `versions.env`, Studio's plugins through PRs that edit
   `build_files/studio-plugins.txt`.
 
 ### CI
@@ -679,7 +723,7 @@ separate so you can commit them on their own and push them from the host.
      - updates and rollback
    - `docs/allowlist.md`: edit → PR → CI → staged update → reboot.
 9. **Claude Code instructions for every project.** The managed
-   `CLAUDE.md` and the sweep skills (see Claude Code).
+   `CLAUDE.md`, the sweep skills and the official plugins (see Claude Code).
 10. **Later, each after discussion:** image signing, a DNS filtering resolver,
    narrower GitHub hosts, automated Android Studio bump PRs, rechunking the
    image (`rpm-ostree compose build-chunked-oci`) so updates download only
@@ -691,7 +735,7 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. systemd-firstboot runs Fedora's command plus `--chrome=no`. The clipboard bridge's user unit is pulled in from `/usr`. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only links to our managed settings, CLAUDE.md and skills. The settings turn updates off and have exactly the proxy variables from `proxy.env`. Claude Code, run as dev against a fake API on loopback, sends the managed CLAUDE.md and every managed skill's name. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. systemd-firstboot runs Fedora's command plus `--chrome=no`. The clipboard bridge's user unit is pulled in from `/usr`. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only links to our managed settings, CLAUDE.md and skills. The settings turn updates off, have exactly the proxy variables from `proxy.env`, enable the official marketplace's Context7 and Superpowers, and point at the seed. Claude Code, run as dev against a fake API on loopback, sends the managed CLAUDE.md and every managed skill's name. The plugin seed holds every enabled plugin, in the directory named after its commit. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization and hardware graphics, Claude login, the first-boot screens and password flow in Boxes, a shared folder in Dolphin, text copied both ways, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
@@ -745,6 +789,10 @@ VM test assertions (`tests/vm/checks.sh`):
   - Studio's log from that run lists every plugin in `studio-plugins.txt` as
     loaded. A second start through the launcher turns on automatic plugin
     updates in that profile.
+- **Claude Code's plugins.** dev's first Claude Code run (the proxy check
+  above) registers the seeded marketplace. On the next start, nothing is
+  fetched from GitHub and dev's own plugin cache holds no copies, so the
+  plugins load from the seed.
 - **Boxes.** `run-vm.sh` gives the VM the two virtio ports Boxes adds
   (`org.spice-space.webdav.0` and `com.redhat.spice.0`), with nothing on the
   other end, so their services start as they would in Boxes.

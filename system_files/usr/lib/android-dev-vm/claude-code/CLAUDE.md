@@ -29,6 +29,17 @@ A project may make these rules stricter, never looser. Where a project's
   and `flutter run` pick every device or ask, so build first and install
   with `adb -s <serial> install -r <apk>`.
 
+## Plugins
+
+- **Context7** looks up current documentation for libraries and SDKs. Use
+  it before relying on memory for an API, a Gradle DSL or a version. It
+  needs a one-time sign-in from `/mcp`. If it isn't signed in, say so once
+  and carry on without it.
+- **Superpowers** brings skills for planning, test-driven development,
+  debugging and review. Use them, but where they disagree with these rules
+  or the project's (pushing, merging, branch handling, which reviews to
+  run), these rules and the project's win.
+
 ## The check
 
 "The check" is the project's one command that runs every quality gate, and
