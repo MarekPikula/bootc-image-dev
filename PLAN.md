@@ -458,6 +458,14 @@ README.md                  for the people running the VM
     artifact's and the pushed manifest's config digest must equal it.
     `sha-<12 hex>` and then `stable` (what VMs track) point at the same
     manifest.
+  - Then it pushes the tested qcow2 to the same repository as an OCI
+    artifact, under `disk-<version>` and then `disk`. People download it
+    with `podman artifact pull` (README). Artifact storage gave 1–2 MB/s,
+    against 8 MB/s for one connection to GHCR's CDN. 256 MiB chunks, one
+    layer each, let podman fetch several at once, and it checks each
+    digest. oras pushes it (pinned by sha256), since the runner's podman
+    4.9 can't. Old `disk-*` versions pile up. Public package storage is
+    free, so cleaning them up can wait.
   - One publish at a time. A queued run waits.
 - **qcow2.** `disk/build-qcow2.sh` runs the image itself in
   `sudo podman run --privileged` against rootful storage, and its bootc
@@ -474,7 +482,7 @@ README.md                  for the people running the VM
     exists.
   - It replaced bootc-image-builder (archived): the same bootc install, about
     3 minutes faster, and one less pinned third-party image.
-  - The qcow2 is uploaded as an artifact.
+  - The qcow2 is uploaded as an artifact (for PR runs and run-vm.sh).
 - **Pinning.** Third-party actions are pinned by commit SHA.
 
 ## Build order

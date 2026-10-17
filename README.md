@@ -20,20 +20,27 @@ Inside: Android Studio, JDK 25, git, Claude Code, Firefox and KDE Plasma.
 
 ## Get the disk image
 
-Every run of the **Publish** workflow keeps the VM's disk image as an
-artifact for two weeks. Download `android-dev-vm-qcow2` from the latest green
-run on `main` under Actions → Publish (signed in to GitHub). Take one started
-by a push or the weekly schedule, never by a pull request: a pull request can
-change the workflow it runs. The browser gives you a zip to extract. Or use the
-GitHub CLI after `gh auth login`, which does the same and extracts it:
+The **Publish** workflow pushes the VM's disk image to GHCR next to the image it
+was built from, as an OCI artifact in chunks. Download it with podman 5.5 or
+newer (`podman --version`), no sign-in needed:
 
 ```
-gh run download -R MarekPikula/bootc-image-dev -n android-dev-vm-qcow2 \
-  "$(gh run list -R MarekPikula/bootc-image-dev -w publish.yml -b main -s success \
-     --json databaseId,event -q 'map(select(.event != "pull_request"))[0].databaseId')"
+img=ghcr.io/marekpikula/bootc-image-dev:disk
+podman artifact pull "$img"
+podman artifact extract "$img" .
+podman artifact rm "$img"
+cat android-dev-vm.qcow2.* >android-dev-vm.qcow2 && rm android-dev-vm.qcow2.*
 ```
 
-That gives `android-dev-vm.qcow2`, a 64 GiB disk that grows as you use it.
+That gives `android-dev-vm.qcow2`, a 64 GiB disk that grows as you use it. It
+needs about 11 GB free while it runs. podman checks every chunk against its
+digest, and if the pull stops halfway, run it again.
+
+Each green Publish run on `main` also keeps the disk as the
+`android-dev-vm-qcow2` artifact for two weeks (Actions → Publish, signed in to
+GitHub), but that download is much slower. If you use it, take a run started by
+a push or the weekly schedule, never by a pull request, which can change the
+workflow it runs.
 
 ## Create the VM
 
