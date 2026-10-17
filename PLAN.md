@@ -82,13 +82,18 @@ system_files/              overlay copied to / (paths below are relative to /)
   usr/lib/android-dev-vm/firefox/policies.json   Firefox policy: background services off
   etc/firefox/policies/policies.json             symlink to it, where Firefox looks first
   usr/lib/android-dev-vm/claude-code/managed-settings.json   updates off, dev's proxy
+  usr/lib/android-dev-vm/claude-code/CLAUDE.md   instructions for every project
+  usr/lib/android-dev-vm/claude-code/skills/     security-sweep, quality-sweep, ux-audit, emulator-test
   etc/claude-code/managed-settings.json          symlink to it, the only place Claude Code reads
+  etc/claude-code/CLAUDE.md                      symlink, Claude Code's managed-policy file
+  etc/claude-code/.claude/skills                 symlink, Claude Code's managed skills
   etc/security/pwquality.conf.d/50-android-dev-vm.conf    enforce_for_root
 .pre-commit-config.yaml    hadolint, shellcheck, actionlint, file hygiene
 disk/build-qcow2.sh        builds the qcow2 (bootc install to-disk, from the image itself), root and CI only
 tests/lib.sh               check/indent/finish helpers shared by image and VM checks
 tests/image/checks.sh      assertions run inside the built image with podman (no VM)
 tests/image/polkit.sh      runs polkitd in the image and checks dev against every registered action
+tests/image/claude-context.sh   runs Claude Code against a fake API and checks what it sends
 tests/image/firstboot.sh   drives the first-boot prompt with typed input in a throwaway container
 tests/image/privileged-files.txt   reviewed setuid/setgid files and file capabilities
 tests/vm/run-vm.sh         boots a qcow2 with qemu/KVM (UEFI), per-run SSH key via SMBIOS credentials
@@ -256,7 +261,8 @@ README.md                  for the people running the VM
 - **Managed settings.** Claude Code reads them only from `/etc/claude-code`:
   `managed-settings.json` and a `managed-settings.d/` drop-in directory.
   The image ships the file, a symlink to the image-owned one under
-  `/usr/lib/android-dev-vm/claude-code/`, and nothing else there. Nothing a
+  `/usr/lib/android-dev-vm/claude-code/`, and nothing else there but the
+  links to the instructions and skills below. Nothing a
   user or project sets overrides them. They apply to admin too.
   - `DISABLE_UPDATES`: no update checks, no hint to run `dnf upgrade`, which
     can't work here, and `claude install` no longer puts a self-updating
@@ -271,6 +277,36 @@ README.md                  for the people running the VM
     metrics (no code, prompts or paths) reach Anthropic through
     `api.anthropic.com`.
   - Bypass-permissions mode stays available (open question 4).
+- **Instructions for every project.** `/etc/claude-code/CLAUDE.md`, Claude
+  Code's managed-policy file, links to
+  `/usr/lib/android-dev-vm/claude-code/CLAUDE.md`. Claude Code loads it
+  before the user's and the project's own, and no one can exclude it, so it
+  changes only with the image. Projects add their own `CLAUDE.md` on top,
+  and may make the rules stricter, never looser.
+  - It started from the `CLAUDE.md` of an example Compose app made in the
+    VM. Its general rules moved here, and its project facts stay in the
+    project. It covers the VM (no root, the proxy, the emulator next to a
+    phone, Studio's shared Gradle daemon), "the check" (each project's one
+    command, Gradle or Flutter), fatal quality gates, dependencies, commits,
+    the review workflow, and always-on security and UX rules.
+  - It stays under the 200 lines Claude Code's docs advise, since every
+    session loads it. The long procedures are skills.
+  - dev can still write `~/.claude/CLAUDE.md`, which loads after ours. No
+    managed setting stops that.
+- **Skills.** `/etc/claude-code/.claude/skills` links to
+  `/usr/lib/android-dev-vm/claude-code/skills/`. Managed skills take
+  precedence over personal and project ones, and only their names and
+  descriptions are in every session: a body loads when the skill is used.
+  - `/security-sweep`, `/quality-sweep` and `/ux-audit` look at the whole
+    codebase (or every screen) with parallel subagents, and have a second
+    subagent try to refute each finding before it's reported.
+    `/emulator-test` drives the app over adb for what changed and checks
+    the outcome from system state. All of them stick to the emulator and
+    put it back the way they found it.
+  - The image checks run Claude Code as dev against a fake Messages API on
+    loopback and check that the request carries the managed CLAUDE.md and
+    every skill's name. That catches a path or format Claude Code doesn't
+    pick up, which it ignores without a word.
 - **Sandbox.** Claude Code's optional Bash sandbox needs bubblewrap and
   socat. Both come with Kinoite, and the image checks assert they're there.
   bubblewrap isn't setuid. It uses user namespaces, where dev's sockets
@@ -642,7 +678,9 @@ separate so you can commit them on their own and push them from the host.
      - nested virtualization on the host for the emulator
      - updates and rollback
    - `docs/allowlist.md`: edit → PR → CI → staged update → reboot.
-9. **Later, each after discussion:** image signing, a DNS filtering resolver,
+9. **Claude Code instructions for every project.** The managed
+   `CLAUDE.md` and the sweep skills (see Claude Code).
+10. **Later, each after discussion:** image signing, a DNS filtering resolver,
    narrower GitHub hosts, automated Android Studio bump PRs, rechunking the
    image (`rpm-ostree compose build-chunked-oci`) so updates download only
    the packages that changed, and dropping the `boot.automount` mask once
@@ -653,7 +691,7 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. systemd-firstboot runs Fedora's command plus `--chrome=no`. The clipboard bridge's user unit is pulled in from `/usr`. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. systemd-firstboot runs Fedora's command plus `--chrome=no`. The clipboard bridge's user unit is pulled in from `/usr`. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only links to our managed settings, CLAUDE.md and skills. The settings turn updates off and have exactly the proxy variables from `proxy.env`. Claude Code, run as dev against a fake API on loopback, sends the managed CLAUDE.md and every managed skill's name. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization and hardware graphics, Claude login, the first-boot screens and password flow in Boxes, a shared folder in Dolphin, text copied both ways, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 

@@ -1,0 +1,1 @@
+../../usr/lib/android-dev-vm/claude-code/CLAUDE.md
