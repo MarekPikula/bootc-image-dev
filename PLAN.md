@@ -49,6 +49,7 @@ system_files/              overlay copied to / (paths below are relative to /)
     squid/squid.conf
     squid/allowlist.txt
     avahi/avahi-daemon.conf        lo only, no wide-area DNS: only for spice-webdavd
+    emulator/advancedFeatures.ini  Vulkan and GLDirectMem off, copied to dev's ~/.android
   usr/libexec/android-dev-vm/
     set-passwords          first-boot prompt (bin_t, so it may run passwd)
     clipboard-to-x11       puts the Wayland clipboard's text on X11's, for spice-vdagent
@@ -68,6 +69,7 @@ system_files/              overlay copied to / (paths below are relative to /)
   usr/lib/bootc/kargs.d/10-ssh.toml       no automatic sshd sockets (systemd.ssh_auto=no)
   usr/lib/systemd/resolved.conf.d/10-android-dev-vm.conf   LLMNR off
   usr/lib/systemd/user/android-dev-clipboard.service   runs clipboard-to-x11 in every graphical session
+  usr/share/user-tmpfiles.d/android-dev-vm.conf        copies the emulator defaults into each profile
   usr/lib/bootc/install/50-android-dev-vm.toml   bootc install defaults (btrfs root)
   usr/lib/systemd/user-environment-generators/60-dev-proxy
   usr/share/polkit-1/rules.d/00-android-dev.rules
@@ -361,6 +363,15 @@ What GNOME Boxes gives the VM over SPICE, and what the VM does to use it.
     An error can still land on the prompt. A sysctl.d file didn't stick:
     Plymouth puts back the level from before its splash, which starts in
     the initrd (seen in a VM).
+- **Emulator.** With 3D acceleration on in Boxes, GL in the VM goes through
+  virgl and Vulkan is Mesa's software lavapipe. The emulator crashed at
+  start (SIGSEGV), with software graphics too, and ran with hardware
+  graphics and Vulkan and GLDirectMem off (seen in Boxes).
+  - A user-tmpfiles.d line copies an `advancedFeatures.ini` with those two
+    off into `~/.android/` when there's none. A file of the user's own, or
+    edits to ours, stay.
+  - The graphics mode is per virtual device, so the README says to choose
+    hardware graphics.
 
 ### Privilege
 
@@ -644,7 +655,7 @@ separate so you can commit them on their own and push them from the host.
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
 | Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. systemd-firstboot runs Fedora's command plus `--chrome=no`. The clipboard bridge's user unit is pulled in from `/usr`. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
-| Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization, Claude login, the first-boot screens and password flow in Boxes, a shared folder in Dolphin, text copied both ways, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
+| Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization and hardware graphics, Claude login, the first-boot screens and password flow in Boxes, a shared folder in Dolphin, text copied both ways, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
 VM test assertions (`tests/vm/checks.sh`):
 
@@ -703,6 +714,7 @@ VM test assertions (`tests/vm/checks.sh`):
   - The clipboard bridge, run as dev in a headless KWin: text copied on the
     Wayland side reaches X11, and text an X11 client sets reaches Wayland
     without the bridge taking it back.
+  - dev has the emulator defaults in `~/.android/advancedFeatures.ini`.
 - **Claude Code.** Run as dev with an empty environment and a dummy API key,
   it calls `api.anthropic.com` through Squid (so the proxy came from the
   managed settings) and makes no direct attempt. What Squid refuses isn't

@@ -524,6 +524,12 @@ EOF
 }
 check "Boxes clipboard: Wayland text reaches X11, X11 text isn't echoed back" boxes_clipboard
 
+# user-tmpfiles.d/android-dev-vm.conf ran when dev's user manager started.
+emulator_defaults() {
+  cmp /usr/lib/android-dev-vm/emulator/advancedFeatures.ini /var/home/dev/.android/advancedFeatures.ini 2>&1 | indent
+}
+check "dev has the emulator defaults (Vulkan and GLDirectMem off)" emulator_defaults
+
 # Claude Code with no proxy in its environment: the managed settings alone
 # must send it through Squid, with no direct attempt. The VM has no login, so
 # a dummy key makes it call the API. The API refuses the key, and the tunnel

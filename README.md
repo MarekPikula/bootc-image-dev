@@ -59,6 +59,8 @@ workflow it runs.
    can delete the download afterwards.
 3. **Give it room.** At least 8 GB of memory (Android Studio and the emulator
    together need it) and 4 CPUs.
+4. **Turn on 3D acceleration** in the VM's settings in Boxes. The emulator
+   needs it.
 
 ## First boot
 
@@ -83,6 +85,9 @@ then shut the VM down and start it again.
   Flutter SDK isn't included. All of Google's domains are on the list, so
   Google Play in the emulator can work. If it needs others, run
   `android-dev-denied` (below).
+- **The emulator.** When you create a virtual device in Studio's Device
+  Manager, set its graphics acceleration to Hardware (in Additional
+  settings). With the other settings it crashed at start.
 - **Claude Code.** Open a terminal and run `claude`. To sign in, it prints a
   link: open it in a browser **on your host**, sign in, and paste the code the
   page shows back into the terminal (Boxes shares the clipboard, both ways,
