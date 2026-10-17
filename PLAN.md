@@ -34,6 +34,7 @@ build_files/
                            off. Its own RUN, see the Containerfile
   build.sh                 runs the numbered steps in order
   15-su.sh                 su for wheel only (pam_wheel requisite)
+  16-polkit-helper.sh      polkit's password helper for wheel only (4750 root:wheel)
   40-services.sh           enable (symlinks in /usr) and mask units
   50-caps.sh               drops file capabilities that could undo the network rule
 system_files/              overlay copied to / (paths below are relative to /)
@@ -300,6 +301,14 @@ README.md                  for the people running the VM
   `sudo -l -U dev` grants nothing.
 - **su.** `pam_wheel.so use_uid` is `requisite` in `/etc/pam.d/su`, so non-wheel
   users are refused before any password prompt.
+- **polkit's password helper.** The setuid `polkit-agent-helper-1` runs PAM
+  for whichever user its caller names and reports whether the password was
+  right. dev could have guessed admin's password through it, limited only by
+  `pam_faildelay`'s 2 s per attempt, in parallel. `16-polkit-helper.sh` makes
+  it `4750 root:wheel`, so dev can't run it at all. dev never needs it, since
+  polkit never asks dev for a password. Socket activation
+  (`polkit-agent-helper.socket`) would run it as root for any caller, so it's
+  masked. The image checks run the helper as dev and admin.
 - **polkit.** `00-android-dev.rules` returns `NO` for every action dev asks for,
   except these, and only from dev's active local session (as upstream's
   `allow_active`, but `NO` instead of an admin prompt everywhere else):
@@ -481,7 +490,7 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, and `su` is wheel-only. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries, the rule and Squid are enabled from `/usr`, user sessions require the rule, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service ends up running `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries, the rule and Squid are enabled from `/usr`, user sessions require the rule, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service ends up running `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 

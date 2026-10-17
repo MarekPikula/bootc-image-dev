@@ -20,7 +20,7 @@
 4111 /usr/bin/sudo
 4755 /usr/bin/umount
 4755 /usr/bin/unix_chkpwd
-4755 /usr/lib/polkit-1/polkit-agent-helper-1
+4750 /usr/lib/polkit-1/polkit-agent-helper-1
 4750 /usr/libexec/dbus-1/dbus-daemon-launch-helper
 2711 /usr/libexec/utempter/utempter
 caps /usr/bin/clockdiff cap_net_raw=p

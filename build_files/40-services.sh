@@ -25,10 +25,14 @@ wants timers.target bootc-fetch-apply-updates.timer
 #   front of ostree's /boot. It can be gone when ostree-finalize-staged runs
 #   at shutdown, which drops the staged update. bootupd mounts the ESP
 #   itself. See PLAN.md, Updates.
+# polkit-agent-helper.socket: lets anyone run polkit's password helper as root
+#   through a socket, around 16-polkit-helper.sh's wheel-only mode. Disabled
+#   already, masked so it stays off.
 systemctl mask \
   plasma-setup.service \
   avahi-daemon.service avahi-daemon.socket \
   cups.service cups.socket cups.path cups-browsed.service \
   geoclue.service \
   mcelog.service \
-  boot.automount
+  boot.automount \
+  polkit-agent-helper.socket

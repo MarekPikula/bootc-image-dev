@@ -130,6 +130,21 @@ out="$(su_as admin root)"
 [[ $out == Password:* ]] || { echo "      su root as admin: $out"; bad=1; }
 exit "$bad"
 EOF
+# The setuid helper polkit agents run to check a password, which would
+# otherwise ask for admin's password on dev's behalf and say whether it was
+# right (16-polkit-helper.sh). Same control as su.
+check "polkit's password helper: dev can't run it, admin can" in_image <<'EOF'
+helper_as() {
+  printf 'cookie\n' | setpriv --reuid="$1" --regid="$1" --init-groups \
+    timeout 10 /usr/lib/polkit-1/polkit-agent-helper-1 admin 2>&1 || true
+}
+bad=0
+out="$(helper_as dev)"
+[[ $out != *PAM_PROMPT* && $out == *"Permission denied"* ]] || { echo "      as dev: $out"; bad=1; }
+out="$(helper_as admin)"
+[[ $out == *PAM_PROMPT_ECHO_OFF* ]] || { echo "      as admin: $out"; bad=1; }
+exit "$bad"
+EOF
 check "polkit: 00-android-dev.rules runs before every other rule" in_image <<'EOF'
 first="$(find /etc/polkit-1/rules.d /usr/share/polkit-1/rules.d -name '*.rules' -printf '%f\n' |
   LC_ALL=C sort | head -n1)"
@@ -177,11 +192,12 @@ check "root is locked" in_image <<'EOF'
 field="$(getent shadow root | cut -d: -f2)"
 [[ $field =~ ^[!*]+$ ]] || { echo "      root's shadow field: '$field'"; exit 1; }
 EOF
-check "plasma-setup, avahi, cups, geoclue, mcelog and boot.automount are masked" in_image <<'EOF'
+# The list and the reasons are in build_files/40-services.sh.
+check "units that conflict with the VM's design are masked" in_image <<'EOF'
 bad=0
 for unit in plasma-setup.service avahi-daemon.service avahi-daemon.socket \
   cups.service cups.socket cups.path cups-browsed.service geoclue.service \
-  mcelog.service boot.automount; do
+  mcelog.service boot.automount polkit-agent-helper.socket; do
   state="$(systemctl is-enabled "$unit" 2>&1 || true)"
   [[ $state == masked ]] || { echo "      $unit: $state"; bad=1; }
 done
