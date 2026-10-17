@@ -25,6 +25,13 @@ wants timers.target bootc-fetch-apply-updates.timer
 #   front of ostree's /boot. It can be gone when ostree-finalize-staged runs
 #   at shutdown, which drops the staged update. bootupd mounts the ESP
 #   itself. See PLAN.md, Updates.
+# nftables.service: Fedora's static firewall. Disabled, but its reload and
+#   stop run `nft flush ruleset`, which would delete dev's rule while dev's
+#   sessions keep running. firewalld only touches its own table.
+# systemd-nsresourced, systemd-mountfsd: hand out transient UID ranges and
+#   mounts to unprivileged users. Processes under such a UID aren't matched by
+#   dev's rule, so only 00-android-dev.rules' NO stands in the way. Nothing in
+#   this VM uses them.
 # polkit-agent-helper.socket: lets anyone run polkit's password helper as root
 #   through a socket, around 16-polkit-helper.sh's wheel-only mode. Disabled
 #   already, masked so it stays off.
@@ -35,4 +42,7 @@ systemctl mask \
   geoclue.service \
   mcelog.service \
   boot.automount \
+  nftables.service \
+  systemd-nsresourced.service systemd-nsresourced.socket \
+  systemd-mountfsd.service systemd-mountfsd.socket \
   polkit-agent-helper.socket

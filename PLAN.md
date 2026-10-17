@@ -56,6 +56,7 @@ system_files/              overlay copied to / (paths below are relative to /)
     android-dev-firstboot.service
     multi-user.target.wants/android-dev-firstboot.service   image-owned enablement
     systemd-sysusers.service.d/50-android-dev-vm.conf       imports admin/dev password credentials
+    user@1500.service.d/10-dev-egress.conf                  dev's user manager needs the rule too
   usr/lib/bootc/kargs.d/10-console.toml   serial console too, for headless logs
   usr/lib/bootc/kargs.d/10-ssh.toml       no automatic sshd sockets (systemd.ssh_auto=no)
   usr/lib/bootc/install/50-android-dev-vm.toml   bootc install defaults (btrfs root)
@@ -108,9 +109,14 @@ README.md                  for the people running the VM
     (`podman unshare`, `podman run --user`) that the rule wouldn't match.
     Rootless containers for dev would need the rule widened to dev's range
     first.
+  - systemd-nsresourced and systemd-mountfsd hand out transient UID ranges
+    to unprivileged users, with the same effect. The polkit rule says no to
+    them, and both are masked, since nothing here uses them.
 - **Coexisting with firewalld.** The rule lives in its own table and is keyed
   on the numeric UID. A drop in any base chain is final, so firewalld can't
-  re-allow dev's traffic. `nftables.service` stays disabled.
+  re-allow dev's traffic. `nftables.service` is masked: its reload and stop
+  run `nft flush ruleset`, which would delete dev's table while sessions keep
+  running.
 - **Failing closed.**
   - `dev-egress-firewall.service` loads the table before `network-pre.target`.
   - `systemd-user-sessions.service` gets `Requires=` and `After=` on that
@@ -120,6 +126,9 @@ README.md                  for the people running the VM
     `login` and `sshd`, which the image checks assert.
   - Stopping the unit leaves the rule loaded, but stops
     `systemd-user-sessions.service` too, which puts `/run/nologin` back.
+  - `user@1500.service` (dev's user manager) gets the same `Requires=` and
+    `After=`. It doesn't go through pam_nologin, and with lingering on it
+    starts at boot without a login.
   - Checked in a VM with the unit masked: no table, `systemd-user-sessions`
     never starts, and dev's SSH login gets pam_nologin's message. The system
     still reports `running`, because a dependency failure marks no unit as

@@ -403,12 +403,17 @@ fail_closed() {
     bad=1
   fi
   [[ -e /run/nologin ]] || { echo "      no /run/nologin"; bad=1; }
+  # dev's user manager, which lingering would start without a login.
+  if systemctl start user@1500.service 2>/dev/null; then
+    echo "      user@1500.service started without the rule's unit"
+    bad=1
+  fi
   rm -r "$dropin"
   systemctl daemon-reload
   systemctl start systemd-user-sessions.service || bad=1
   [[ ! -e /run/nologin ]] || { echo "      /run/nologin left after restoring"; bad=1; }
   return "$bad"
 }
-check "fail closed: no user sessions without the rule's unit" fail_closed
+check "fail closed: no user sessions or dev user manager without the rule's unit" fail_closed
 
 finish "vm checks"

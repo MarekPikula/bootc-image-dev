@@ -197,7 +197,9 @@ check "units that conflict with the VM's design are masked" in_image <<'EOF'
 bad=0
 for unit in plasma-setup.service avahi-daemon.service avahi-daemon.socket \
   cups.service cups.socket cups.path cups-browsed.service geoclue.service \
-  mcelog.service boot.automount polkit-agent-helper.socket; do
+  mcelog.service boot.automount nftables.service \
+  systemd-nsresourced.service systemd-nsresourced.socket \
+  systemd-mountfsd.service systemd-mountfsd.socket polkit-agent-helper.socket; do
   state="$(systemctl is-enabled "$unit" 2>&1 || true)"
   [[ $state == masked ]] || { echo "      $unit: $state"; bad=1; }
 done

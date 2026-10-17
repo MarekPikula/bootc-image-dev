@@ -50,6 +50,7 @@ them.
 - **Failing closed.** The rule loads early in boot, before the network comes
   up. User logins require it: if it doesn't load, `/run/nologin` stays and
   nobody but root can log in, on the login screen, a text console or SSH.
+  dev's background services (its systemd user manager) don't start either.
   The login screen then says the system is still booting. Root is locked, so
   the way back is to pick the previous entry in the boot menu.
 - **firewalld** keeps working as before. It manages its own table, and our
@@ -114,7 +115,9 @@ These are known and accepted for now. Some have a planned fix.
   the proxy, to allowlisted domains, so the Play Store and similar don't work.
 - **admin.** admin's traffic isn't filtered. admin must not give `dev`
   subordinate UIDs (`usermod --add-subuids`): processes under those UIDs
-  aren't matched by the rule.
+  aren't matched by the rule. systemd-nsresourced and systemd-mountfsd, which
+  hand out such UIDs, are masked. So is `nftables.service`, whose stop and
+  reload would delete dev's rule.
 - **Kernel and privileged-binary bugs.** A local root exploit, or a bug in a
   reviewed setuid or capability binary, defeats all of the above.
 - **Image trust.** Images aren't signed yet. VMs accept whatever reaches the
