@@ -3,9 +3,9 @@
 # systemd-sysusers has created the accounts. Starts a system bus and polkitd,
 # then asks polkit about every registered action:
 #   - dev gets NO for all of them (never "challenge", which would mean an admin
-#     prompt). The subjects here have no login session, like a background
-#     service, so even 00-android-dev.rules' allowlist must say NO. That
-#     allowlist needs dev's active desktop session and is checked by hand.
+#     prompt). The subjects here have no login session, so even
+#     00-android-dev.rules' allowlist must say NO. That allowlist needs dev's
+#     active local session, which tests/vm/checks.sh creates.
 #   - controls: admin gets an implicit YES that dev is denied, and root gets
 #     YES, so the NOs come from our rule and not from a broken setup.
 # Prints mismatches and exits non-zero if there are any.

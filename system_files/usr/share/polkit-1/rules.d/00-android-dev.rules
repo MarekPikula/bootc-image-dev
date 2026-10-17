@@ -13,7 +13,8 @@ polkit.addRule(function (action, subject) {
 
     var allowed = [
         // Shut down or restart the VM from the session. power-off and reboot
-        // also imply set-wall-message (policykit.imply), so it's listed too.
+        // imply set-wall-message (policykit.imply), and polkit grants an
+        // implied action whatever this rule says, so it's listed too.
         "org.freedesktop.login1.power-off",
         "org.freedesktop.login1.reboot",
         "org.freedesktop.login1.suspend",
@@ -30,8 +31,10 @@ polkit.addRule(function (action, subject) {
         // Inhibitors let apps delay sleep or shutdown for this session.
         action.id.indexOf("org.freedesktop.login1.inhibit-") === 0;
 
-    // Only dev's active local session, as upstream's allow_active. Background
-    // services and inactive sessions get NO, never an admin prompt.
+    // Only while dev's local session is active, as upstream's allow_active.
+    // polkit counts dev's own background processes (its systemd user units,
+    // where Plasma runs apps) as part of that session. Otherwise NO, never an
+    // admin prompt. tests/vm/checks.sh pins what this allows.
     if (inAllowlist && subject.local && subject.active) {
         return polkit.Result.YES;
     }

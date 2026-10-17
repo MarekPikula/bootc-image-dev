@@ -138,6 +138,67 @@ polkit_denies_dev() {
 }
 check "dev: polkit says no to managing units" polkit_denies_dev
 
+# The allowlist in 00-android-dev.rules needs dev's active local session, which
+# the image test can't create. A session on tty8 stands in for the desktop:
+# PAM's login stack, as on a text console, made active with chvt (tty1-6 would
+# get logind's automatic getty, which hangs it up). Every action must be NO
+# (never an admin prompt), except exactly the ones listed here. A new action or
+# a widened rule fails until it's reviewed and added.
+session_allowlist="org.freedesktop.RealtimeKit1.acquire-high-priority
+org.freedesktop.RealtimeKit1.acquire-real-time
+org.freedesktop.login1.inhibit-block-idle
+org.freedesktop.login1.inhibit-block-shutdown
+org.freedesktop.login1.inhibit-block-sleep
+org.freedesktop.login1.inhibit-delay-shutdown
+org.freedesktop.login1.inhibit-delay-sleep
+org.freedesktop.login1.inhibit-handle-hibernate-key
+org.freedesktop.login1.inhibit-handle-lid-switch
+org.freedesktop.login1.inhibit-handle-power-key
+org.freedesktop.login1.inhibit-handle-reboot-key
+org.freedesktop.login1.inhibit-handle-suspend-key
+org.freedesktop.login1.power-off
+org.freedesktop.login1.reboot
+org.freedesktop.login1.suspend
+org.freedesktop.udisks2.eject-media
+org.freedesktop.udisks2.filesystem-mount"
+polkit_in_session() {
+  local pid session action rc yes="" bad=0
+  systemd-run -q --unit=dev-tty8 -p PAMName=login -p User=dev -p TTYPath=/dev/tty8 \
+    -p StandardInput=tty-force -p StandardOutput=tty -p TTYVHangup=yes /usr/bin/sleep infinity
+  chvt 8
+  # Until the session is in the foreground and its process runs as dev. The
+  # session is registered while the process is still root, before the exec.
+  for _ in {1..100}; do
+    pid="$(systemctl show -p MainPID --value dev-tty8)"
+    session="$(ps -o lsession= -p "$pid" | xargs)"
+    [[ "$(ps -o user=,comm= -p "$pid" | xargs)" == "dev sleep" &&
+      "$(loginctl show-session -p Active --value "$session" 2>/dev/null)" == yes ]] && break
+    sleep 0.1
+  done
+  if [[ "$(ps -o user= -p "$pid" | xargs)" != dev ||
+    "$(loginctl show-session -p Active -p Remote -p Seat "$session" | LC_ALL=C sort | xargs)" != \
+    "Active=yes Remote=no Seat=seat0" ]]; then
+    echo "      no active local session for dev: $(loginctl show-session "$session" 2>&1 | xargs)"
+org.freedesktop.login1.set-wall-message
+    bad=1
+  else
+    for action in $(pkaction); do
+      rc=0
+      pkcheck --action-id "$action" --process "$pid" >/dev/null 2>&1 || rc=$?
+      case $rc in
+        0) yes+="$action"$'\n' ;;
+        1) ;;
+        *) echo "      $action: pkcheck exit $rc"; bad=1 ;;
+      esac
+    done
+    diff <(echo "$session_allowlist") <(printf '%s' "$yes" | LC_ALL=C sort) | indent || bad=1
+  fi
+  systemctl stop dev-tty8
+  chvt 1
+  return "$bad"
+}
+check "dev's active session: polkit says yes to exactly the allowlist, no to the rest" polkit_in_session
+
 # The emulator needs /dev/kvm without kvm membership. The node exists even
 # without nested virtualisation (udev static_node), and opening it then fails
 # with ENODEV or similar. What matters is that dev isn't refused access.

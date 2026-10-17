@@ -327,10 +327,14 @@ README.md                  for the people running the VM
   (`polkit-agent-helper.socket`) would run it as root for any caller, so it's
   masked. The image checks run the helper as dev and admin.
 - **polkit.** `00-android-dev.rules` returns `NO` for every action dev asks for,
-  except these, and only from dev's active local session (as upstream's
+  except these, and only while dev's local session is active (as upstream's
   `allow_active`, but `NO` instead of an admin prompt everywhere else):
-  - login1 power-off, reboot, suspend and set-wall-message (implied by
-    power-off and reboot)
+  - login1 power-off, reboot, suspend and set-wall-message. power-off and
+    reboot imply set-wall-message (`policykit.imply`), and polkit grants an
+    implied action even when a rule says no (seen in a VM), so it can't be
+    taken away on its own. dev can leave a message that logind shows on
+    every terminal at the next scheduled shutdown, admin's included. That's
+    accepted: nothing in it can ask for a password that dev could read.
   - login1 inhibitors
   - RealtimeKit (audio)
   - udisks2 removable-media mount and eject
@@ -338,8 +342,11 @@ README.md                  for the people running the VM
   It sorts first, ahead of Kinoite's `empower.rules`, which grants everything
   to the `empower` group. `tests/image/polkit.sh` runs polkitd in the image and
   checks dev against every registered action. Its subjects have no login
-  session, like a background service, so every answer must be `NO`. The
-  allowlist's `YES` needs a real desktop session and is a manual check.
+  session, so every answer must be `NO`. The VM checks open an active local
+  session for dev on tty8 and require `YES` for exactly the allowlist and
+  `NO` for everything else. polkit also counts dev's systemd user units
+  (where Plasma runs apps) as part of the active session, so they get the
+  allowlist too. Seen in a VM.
   Without the rule,
   dev would get silent `YES` for systemd's mount and namespace helpers, and
   admin prompts (`CHALLENGE`) for rpm-ostree, firewalld and more.
@@ -527,6 +534,8 @@ VM test assertions (`tests/vm/checks.sh`):
     dev process says no to managing units.
   - The only sshd socket is the test's own (`ssh.listen`), none from
     systemd-ssh-generator's automatic ones.
+  - In an active local session for dev (on tty8), polkit says `YES` to
+    exactly the allowlist and `NO` to every other action.
   - `/dev/kvm` is mode 0666 and dev isn't refused when opening it. Without
     nested virtualization the node still exists (udev `static_node`) but the
     open fails with a different error, which the check accepts.
