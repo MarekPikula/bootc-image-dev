@@ -154,6 +154,9 @@ README.md                  for the people running the VM
     tamper with.
   - Nothing is cached, and `forwarded_for delete` keeps the client address
     out of requests.
+  - `shutdown_lifetime 1 seconds`: on stop, Squid waits that long for open
+    connections, 30 s by default, which held up every shutdown. Its clients
+    are all on the VM, going down with it.
   - A `squid.service` drop-in replaces `ExecStart` to use our config, because
     Fedora's unit takes the path from `/etc/sysconfig/squid`.
   - The image checks run `squid -k parse` in the image and fail on any
