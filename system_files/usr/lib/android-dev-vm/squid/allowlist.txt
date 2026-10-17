@@ -41,6 +41,15 @@ api.foojay.io
 github.com
 .githubusercontent.com
 
+# Claude Code's Context7 plugin: its MCP server, and the sign-in that server
+# asks for, behind Cloudflare's bot check. The image brings the plugins
+# themselves.
+mcp.context7.com
+clerk.context7.com
+accounts.context7.com
+context7.com
+challenges.cloudflare.com
+
 # Google's static files and fonts (developer.android.com and other docs pages)
 www.gstatic.com
 fonts.gstatic.com

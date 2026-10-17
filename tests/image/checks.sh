@@ -436,7 +436,7 @@ EOF
 # settings, CLAUDE.md and skills there and nothing else, as links to
 # image-owned files in /usr. The proxy settings must be exactly the ones in
 # proxy.env.
-check "Claude Code: managed settings turn off updates and set dev's proxy" in_image <<'EOF'
+check "Claude Code: managed settings turn off updates, set dev's proxy and enable the plugins" in_image <<'EOF'
 managed=/usr/lib/android-dev-vm/claude-code
 settings=$managed/managed-settings.json
 proxy_env=/usr/lib/android-dev-vm/proxy.env
@@ -446,8 +446,15 @@ proxy_env=/usr/lib/android-dev-vm/proxy.env
 [[ "$(readlink -f /etc/claude-code/CLAUDE.md)" == "$managed/instructions.md" ]]
 [[ "$(readlink -f /etc/claude-code/.claude/skills)" == "$managed/skills" ]]
 [[ "$(jq -r .env.DISABLE_UPDATES "$settings")" == 1 ]]
+[[ "$(jq -r .env.CLAUDE_CODE_PLUGIN_SEED_DIR "$settings")" == /usr/lib/claude-code-plugins ]]
+# A git source over HTTPS: for a "github" one, Claude Code tries SSH first,
+# which dev's rule refuses (seen in a VM).
+jq -e '.extraKnownMarketplaces["claude-plugins-official"].source ==
+    {source: "git", url: "https://github.com/anthropics/claude-plugins-official.git"} and
+  (.enabledPlugins | length > 0 and all(keys[]; endswith("@claude-plugins-official")))' \
+  "$settings" >/dev/null
 names="$(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$proxy_env" | sort)"
-in_settings="$(jq -r '.env | keys[] | select(startswith("DISABLE_") | not)' "$settings" | sort)"
+in_settings="$(jq -r '.env | keys[] | select(startswith("DISABLE_") or . == "CLAUDE_CODE_PLUGIN_SEED_DIR" | not)' "$settings" | sort)"
 [[ $in_settings == "$names" ]] ||
   { echo "      variables differ from proxy.env:"; diff <(echo "$names") <(echo "$in_settings") | sed 's/^/        /'; exit 1; }
 bad=0
@@ -459,6 +466,18 @@ done
 exit "$bad"
 EOF
 
+# build_files/claude-plugins.sh: every enabled plugin is in the seed, in the
+# directory Claude Code looks for at runtime (its commit's first 12 characters).
+check "Claude Code: the plugin seed holds every enabled plugin, under its commit" in_image <<'EOF'
+settings=/usr/lib/android-dev-vm/claude-code/managed-settings.json
+seed="$(jq -r .env.CLAUDE_CODE_PLUGIN_SEED_DIR "$settings")"
+bad=0
+for plugin in $(jq -r '.enabledPlugins | to_entries[] | select(.value == true) | .key' "$settings"); do
+  read -r sha path < <(jq -r --arg p "$plugin" '.plugins[$p][0] | "\(.gitCommitSha) \(.installPath)"' "$seed/installed_plugins.json")
+  [[ $path == "$seed/cache/"*"/${sha:0:12}" && -d $path ]] || { echo "      $plugin: $path"; bad=1; }
+done
+exit "$bad"
+EOF
 # The image's instructions for every project (PLAN.md, Claude Code). Claude
 # Code ignores files it can't parse or doesn't look for without a word, so this
 # runs it and reads what it sends.
