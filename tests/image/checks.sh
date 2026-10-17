@@ -35,6 +35,31 @@ in_image() {
   podman exec -i "$ctr" /usr/bin/bash -euo pipefail -s
 }
 
+# Every ExecStart= command in the unit text on stdin, in order: an empty
+# ExecStart= clears the list.
+exec_starts() {
+  awk '/^ExecStart=/ { if ($0 == "ExecStart=") n = 0; else cmd[++n] = substr($0, 11) }
+    END { for (i = 1; i <= n; i++) print cmd[i] }'
+}
+
+# expect_exec_start UNIT COMMAND: with its drop-ins, UNIT runs COMMAND alone.
+expect_exec_start() {
+  local actual
+  actual="$(podman exec "$ctr" systemctl cat "$1" | exec_starts)"
+  [[ $actual == "$2" ]] || { echo "      ExecStart= lines:"; indent <<<"$actual"; return 1; }
+}
+
+# expect_unit_state STATE UNIT...: systemctl is-enabled says STATE for each.
+expect_unit_state() {
+  local state=$1 unit actual bad=0
+  shift
+  for unit; do
+    actual="$(podman exec "$ctr" systemctl is-enabled "$unit" 2>&1 || true)"
+    [[ $actual == "$state" ]] || { echo "      $unit: $actual"; bad=1; }
+  done
+  return "$bad"
+}
+
 # /sysroot is skipped: it holds the ostree repo's copies of the same files.
 privileged_files() {
   in_image <<'EOF'
@@ -172,12 +197,8 @@ check "setuid/setgid files and capabilities match tests/image/privileged-files.t
 # Every command the service would run, in order: an empty ExecStart= clears
 # the list. Without that line in the drop-in, Kinoite's own
 # `bootc upgrade --apply` would still run first and reboot.
-check "updates are staged, never applied with a reboot" in_image <<'EOF'
-exec_start="$(systemctl cat bootc-fetch-apply-updates.service | awk '
-  /^ExecStart=/ { if ($0 == "ExecStart=") n = 0; else cmd[++n] = substr($0, 11) }
-  END { for (i = 1; i <= n; i++) print cmd[i] }')"
-[[ $exec_start == "/usr/bin/bootc upgrade --quiet" ]] || { sed 's/^/      ExecStart=/' <<<"$exec_start"; exit 1; }
-EOF
+check "updates are staged, never applied with a reboot" \
+  expect_exec_start bootc-fetch-apply-updates.service "/usr/bin/bootc upgrade --quiet"
 check "our units are pulled in from /usr" in_image <<'EOF'
 bad=0
 for link in multi-user.target.wants/android-dev-firstboot.service \
@@ -213,18 +234,26 @@ field="$(getent shadow root | cut -d: -f2)"
 [[ $field =~ ^[!*]+$ ]] || { echo "      root's shadow field: '$field'"; exit 1; }
 EOF
 # The list and the reasons are in build_files/40-services.sh.
-check "units that conflict with the VM's design are masked" in_image <<'EOF'
-bad=0
-for unit in plasma-setup.service avahi-daemon.service avahi-daemon.socket \
-  cups.service cups.socket cups.path cups-browsed.service geoclue.service \
-  mcelog.service boot.automount nftables.service \
+check "units that conflict with the VM's design are masked" expect_unit_state masked \
+  plasma-setup.service cups.service cups.socket cups.path cups-browsed.service \
+  geoclue.service mcelog.service boot.automount nftables.service \
   systemd-nsresourced.service systemd-nsresourced.socket \
-  systemd-mountfsd.service systemd-mountfsd.socket polkit-agent-helper.socket; do
-  state="$(systemctl is-enabled "$unit" 2>&1 || true)"
-  [[ $state == masked ]] || { echo "      $unit: $state"; bad=1; }
-done
-exit "$bad"
-EOF
+  systemd-mountfsd.service systemd-mountfsd.socket polkit-agent-helper.socket
+# avahi runs only when spice-webdavd needs it (40-services.sh), and then with
+# no network to use (its config). Disabled also means no D-Bus activation
+# alias: is-enabled counts it.
+avahi_contained() {
+  local conf=/usr/lib/android-dev-vm/avahi/avahi-daemon.conf fedora line bad=0
+  expect_unit_state disabled avahi-daemon.service avahi-daemon.socket || bad=1
+  # The drop-in repeats Fedora's command to add -f, as for systemd-firstboot.
+  fedora="$(podman exec "$ctr" cat /usr/lib/systemd/system/avahi-daemon.service | exec_starts)"
+  expect_exec_start avahi-daemon.service "$fedora -f $conf" || bad=1
+  for line in allow-interfaces=lo enable-wide-area=no enable-reflector=no; do
+    podman exec "$ctr" grep -qx "$line" "$conf" || { echo "      $conf: no $line"; bad=1; }
+  done
+  return "$bad"
+}
+check "avahi: disabled, on our config, with lo only and no wide-area DNS" avahi_contained
 
 # Network containment (CLAUDE.md): dev reaches the network only through Squid.
 # The rule matches UID 1500 only. A subordinate range would let dev run

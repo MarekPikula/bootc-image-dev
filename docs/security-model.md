@@ -103,7 +103,9 @@ These are known and accepted for now. Some have a planned fix.
   the VM. Don't sign in to other accounts in dev's Firefox.
 - **Services on loopback.** The rule allows all loopback traffic, so `dev`
   reaches any local service, not only Squid. Today the ones that matter are
-  Squid and the DNS stub. The VM test fails when a new one starts listening.
+  Squid, the DNS stub and, while Boxes shares a folder, spice-webdavd, which
+  serves that folder to anyone on the VM. The VM test fails when a new one
+  starts listening.
 - **Root-side services.** Daemons such as NetworkManager, PackageKit, the
   flatpak system helper and fwupd connect on their own. polkit stops `dev`
   from changing their settings or installing anything, but some read-only
@@ -113,7 +115,8 @@ These are known and accepted for now. Some have a planned fix.
   (SPICE), USB devices passed through to the VM (phones over adb, or a
   Bluetooth adapter, which `dev` may use without asking polkit), and a vsock
   device if the VM has one, all bypass the network. They are under the
-  control of whoever runs the VM on the host.
+  control of whoever runs the VM on the host. A shared folder is open to
+  `dev` for reading and writing.
 - **The emulator.** Android guests in the emulator get only HTTPS, through
   the proxy, to allowlisted domains. Google's are, so the Play Store may
   work, but anything it needs from other domains is refused.
