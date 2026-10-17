@@ -120,6 +120,10 @@ These are known and accepted for now. Some have a planned fix.
   reload would delete dev's rule.
 - **Kernel and privileged-binary bugs.** A local root exploit, or a bug in a
   reviewed setuid or capability binary, defeats all of the above.
+- **Studio plugins update themselves** from the JetBrains Marketplace, into
+  dev's profile. A plugin runs as `dev`, so a bad release from a plugin's
+  vendor would run there without anyone reviewing it, the same as one
+  installed by hand.
 - **Image trust.** Images aren't signed yet. VMs accept whatever reaches the
   `stable` tag on GHCR over TLS, so anyone who can push there, a workflow run
   with `packages: write` or the repository owner's credentials, controls

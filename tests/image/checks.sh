@@ -309,7 +309,7 @@ EOF
 
 # Android tooling.
 check "Android Studio: launcher, desktop entry, platform updates off" in_image <<'EOF'
-[[ "$(readlink -f /usr/bin/android-studio)" == /usr/lib/android-studio/bin/studio ]]
+[[ "$(readlink -f /usr/bin/android-studio)" == /usr/libexec/android-dev-vm/android-studio ]]
 [[ -x /usr/lib/android-studio/bin/studio ]]
 desktop-file-validate /usr/share/applications/android-studio.desktop
 grep -qx 'ide.no.platform.update=true' /usr/lib/android-studio/bin/idea.properties

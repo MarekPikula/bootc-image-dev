@@ -1,0 +1,33 @@
+#!/usr/bin/bash
+# Starts Android Studio (/usr/bin/android-studio links here). Once per profile,
+# from the second start on, it turns on automatic plugin updates (PLAN.md,
+# Studio plugins).
+set -euo pipefail
+
+studio=/usr/lib/android-studio
+# Where Studio keeps the profile: its JVM takes the home from the account,
+# not from $HOME.
+home="$(getent passwd "$(id -u)" | cut -d: -f6)"
+config="${XDG_CONFIG_HOME:-$home/.config}/Google/$(jq -r .dataDirectoryName "$studio/product-info.json")"
+done="$config/.android-dev-vm-plugin-updates"
+updates="$config/options/updates.xml"
+option='<option name="PLUGINS_AUTO_UPDATE" value="true" />'
+
+# Only in a profile Studio made itself: one that exists before Studio's first
+# start makes it skip its first-start setup, the SDK wizard included.
+if [[ -d $config && ! -e $done ]]; then
+  if [[ ! -e $updates ]]; then
+    mkdir -p "${updates%/*}"
+    printf '<application>\n  <component name="UpdatesConfigurable">\n    %s\n  </component>\n</application>\n' \
+      "$option" >"$updates"
+  elif ! grep -q 'name="PLUGINS_AUTO_UPDATE"' "$updates"; then
+    if grep -q '<component name="UpdatesConfigurable">' "$updates"; then
+      sed -i "s|<component name=\"UpdatesConfigurable\">|&\n    $option|" "$updates"
+    else
+      sed -i "s|</application>|  <component name=\"UpdatesConfigurable\">\n    $option\n  </component>\n&|" "$updates"
+    fi
+  fi
+  # Once: if dev turns it off later, that stays.
+  touch "$done"
+fi
+exec "$studio/bin/studio" "$@"
