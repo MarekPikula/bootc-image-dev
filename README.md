@@ -94,6 +94,12 @@ then shut the VM down and start it again.
   text only). Android Studio comes with Claude Code's plugin: run `claude` in
   Studio's own terminal, or press Ctrl+Esc, and Claude's edits show up in
   Studio's diff viewer, with your current selection as context.
+- **Claude's instructions come with the VM.** In every project, Claude Code
+  follows the VM's own `CLAUDE.md`: strict quality gates, a review before
+  every commit, and no installing on your phone without asking. Put a
+  project's commands and architecture in that project's `CLAUDE.md`. The VM
+  also brings the skills `/security-sweep`, `/quality-sweep`, `/ux-audit`
+  and `/emulator-test`.
 - **Shared folders.** In Boxes, open the VM's settings, then Devices &
   Shares, and add a folder under Shared Folders. In the VM, open Dolphin,
   press Ctrl+L, type `webdav://localhost:9843/` and press Enter. To keep it

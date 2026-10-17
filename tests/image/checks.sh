@@ -430,15 +430,21 @@ claude --version | sed 's/^/      /'
 # either is missing; command -v only if both are.)
 type -P bwrap socat >/dev/null
 EOF
-# Claude Code reads managed settings from /etc/claude-code only:
-# managed-settings.json and a managed-settings.d/ drop-in directory. The image
-# ships our file there and nothing else. The file itself stays image-owned in
-# /usr. Its proxy settings must be exactly the ones in proxy.env.
+# Claude Code reads its managed files from /etc/claude-code only: settings
+# (managed-settings.json and a managed-settings.d/ drop-in directory),
+# CLAUDE.md, and skills, agents and more under .claude/. The image ships our
+# settings, CLAUDE.md and skills there and nothing else, as links to
+# image-owned files in /usr. The proxy settings must be exactly the ones in
+# proxy.env.
 check "Claude Code: managed settings turn off updates and set dev's proxy" in_image <<'EOF'
-settings=/usr/lib/android-dev-vm/claude-code/managed-settings.json
+managed=/usr/lib/android-dev-vm/claude-code
+settings=$managed/managed-settings.json
 proxy_env=/usr/lib/android-dev-vm/proxy.env
-[[ "$(ls -A /etc/claude-code)" == managed-settings.json ]]
+[[ "$(cd /etc/claude-code && find . -mindepth 1 | LC_ALL=C sort | tr '\n' ' ')" == \
+  "./.claude ./.claude/skills ./CLAUDE.md ./managed-settings.json " ]]
 [[ "$(readlink -f /etc/claude-code/managed-settings.json)" == "$settings" ]]
+[[ "$(readlink -f /etc/claude-code/CLAUDE.md)" == "$managed/instructions.md" ]]
+[[ "$(readlink -f /etc/claude-code/.claude/skills)" == "$managed/skills" ]]
 [[ "$(jq -r .env.DISABLE_UPDATES "$settings")" == 1 ]]
 names="$(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$proxy_env" | sort)"
 in_settings="$(jq -r '.env | keys[] | select(startswith("DISABLE_") | not)' "$settings" | sort)"
@@ -452,6 +458,12 @@ for name in $names; do
 done
 exit "$bad"
 EOF
+
+# The image's instructions for every project (PLAN.md, Claude Code). Claude
+# Code ignores files it can't parse or doesn't look for without a word, so this
+# runs it and reads what it sends.
+check "Claude Code: sends the managed CLAUDE.md and every managed skill" \
+  in_image <tests/image/claude-context.sh
 
 # disk/build-qcow2.sh passes no --filesystem: Kinoite names no default, so the
 # image's install config has to.
