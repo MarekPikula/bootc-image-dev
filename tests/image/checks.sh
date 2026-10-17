@@ -223,8 +223,9 @@ out="$(squid -k parse -f /usr/lib/android-dev-vm/squid/squid.conf 2>&1)"
 EOF
 # Matches entries the way Squid's dstdomain does: every token on a line,
 # case-insensitive, a trailing dot ignored, a leading dot also matching
-# subdomains. So .com, .Google.com and .googleapis.com are all caught.
-check "allowlist allows neither *.google.com nor storage.googleapis.com" in_image <<'EOF'
+# subdomains. So .com, .Google.com and .googleapis.com are all caught. IP
+# addresses are refused too: Squid would match a CONNECT to one listed here.
+check "allowlist has no IP addresses, and allows neither *.google.com nor storage.googleapis.com" in_image <<'EOF'
 awk '
   function covers(entry, host) {
     if (substr(entry, 1, 1) != ".") return entry == host
@@ -235,7 +236,8 @@ awk '
     for (i = 1; i <= NF; i++) {
       entry = tolower($i)
       sub(/\.$/, "", entry)
-      if (covers(entry, "any.google.com") || covers(entry, "storage.googleapis.com")) {
+      if (covers(entry, "any.google.com") || covers(entry, "storage.googleapis.com") ||
+        entry ~ /^\.?[0-9.]+$/ || entry ~ /:/) {
         print "      line " NR ": " $0
         bad = 1
       }

@@ -20,18 +20,20 @@ Inside: Android Studio, JDK 25, git, Claude Code, Firefox and KDE Plasma.
 
 ## Get the disk image
 
-Every successful run of the **Publish** workflow keeps the VM's disk image as
-an artifact for two weeks. Download `android-dev-vm-qcow2` from the latest
-green run under Actions → Publish (signed in to GitHub), or with the GitHub
-CLI after `gh auth login`:
+Every run of the **Publish** workflow keeps the VM's disk image as an
+artifact for two weeks. Download `android-dev-vm-qcow2` from the latest green
+run on `main` under Actions → Publish (signed in to GitHub). Take one started
+by a push or the weekly schedule, never by a pull request: a pull request can
+change the workflow it runs. The browser gives you a zip to extract. Or use the
+GitHub CLI after `gh auth login`, which does the same and extracts it:
 
 ```
 gh run download -R MarekPikula/bootc-image-dev -n android-dev-vm-qcow2 \
-  "$(gh run list -R MarekPikula/bootc-image-dev -w publish.yml -s success -L 1 \
-     --json databaseId -q '.[0].databaseId')"
+  "$(gh run list -R MarekPikula/bootc-image-dev -w publish.yml -b main -s success \
+     --json databaseId,event -q 'map(select(.event != "pull_request"))[0].databaseId')"
 ```
 
-That gives `android-dev-vm.qcow2`, a 64 GB disk that grows as you use it.
+That gives `android-dev-vm.qcow2`, a 64 GiB disk that grows as you use it.
 
 ## Create the VM
 
@@ -61,8 +63,10 @@ The first boot asks on the VM's console:
    strong, and the two must differ. After a few failed tries it gives up:
    reboot and it asks again.
 
-Then log in as `dev`. In a terminal, `ls /dev/kvm` should show the device.
-If it doesn't, the emulator won't start: check step 1 of Create the VM.
+Then log in as `dev`. In a terminal, `grep -cE 'vmx|svm' /proc/cpuinfo`
+should print a number above 0. If it prints 0, the VM has no nested
+virtualization and the emulator won't start: check step 1 of Create the VM,
+then shut the VM down and start it again.
 
 ## Daily use
 
@@ -111,11 +115,13 @@ As `admin`:
 
 - **Nobody can log in after an update.** The login screen says the system is
   still booting, or refuses every login: the network rule for `dev` didn't
-  load, and the VM refuses logins rather than run without it. Reboot and pick
-  the previous entry in the boot menu (press Esc or Shift while the VM starts
-  to show it). That lasts one boot, so log in as `admin` on the console and
-  switch to the version you're running, as above, to stay on it. Then report
-  the problem.
+  load, and the VM refuses logins rather than run without it. Reboot and watch
+  for the boot menu, which shows for a second at every start. Press the Down
+  arrow to stop its countdown, pick the entry ending in `(ostree:1)` (the
+  previous image) and press Enter. The entries show Fedora's version number,
+  not the one `bootc status` shows. That lasts one boot, so log in as `admin`
+  on the console and switch to the version you're running, as above, to stay
+  on it. Then report the problem.
 - **The first-boot questions don't appear** and the screen stays black: wait
   a minute.
 

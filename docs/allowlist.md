@@ -21,14 +21,14 @@ It reads Squid's log and lists refused domains, most frequent first. Not
 every refusal needs fixing. Pages pull in analytics, ads and sign-in widgets,
 and programs phone home. Allow only what the work actually needs.
 
-Some things never go through, whatever the list says: plain HTTP, ports other
-than 443, and IP addresses instead of names. A tool that needs one of those
-needs another way, so open an issue instead.
+Some things never go through: plain HTTP, ports other than 443, and IP
+addresses instead of names (CI refuses them in the list). A tool that needs
+one of those needs another way, so open an issue instead.
 
 ## 2. Add a narrow entry
 
 One entry per line, under a comment saying what the group is for. The file's
-header has the same rules as below.
+header sums up these rules.
 
 - **An exact host** (`maven.google.com`) allows only that name. Prefer it.
 - **A leading dot** (`.gradle.org`) allows the domain and every subdomain. Use

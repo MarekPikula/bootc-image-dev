@@ -55,7 +55,8 @@ questions. Read it before starting work, and update it when a decision changes.
   3-way merge and local edits stop updates from applying.
 - Create state under `/var` with tmpfiles.d, never by shipping files there.
 - Pin every third-party download by version and sha256, and verify it during
-  the build.
+  the build. The exception is Claude Code: each build takes the current
+  release from Anthropic's signed repo, checked against the pinned key.
 - The last Containerfile step is `RUN bootc container lint`.
 
 ## This environment

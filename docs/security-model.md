@@ -78,9 +78,10 @@ These are known and accepted for now. Some have a planned fix.
   send data out. Planned: a local resolver that only answers for allowlisted
   zones.
 - **Allowlisted hosts that accept uploads.** `github.com`,
-  `*.githubusercontent.com` and the Anthropic API can all carry data out, for
-  example as a push to any GitHub repository. So can, with an account,
-  JetBrains' plugin marketplace and addons.mozilla.org. Planned: narrow the
+  `*.githubusercontent.com`, the Anthropic API and claude.ai can all carry
+  data out, for example as a push to any GitHub repository. So can, with an
+  account, JetBrains' plugin marketplace, the Gradle Plugin Portal
+  (`plugins.gradle.org`) and addons.mozilla.org. Planned: narrow the
   GitHub hosts once we know which ones builds need.
 - **Domain fronting.** Squid checks only the name in the CONNECT request,
   not the TLS server name or `Host` header inside the tunnel. A shared front
@@ -102,11 +103,12 @@ These are known and accepted for now. Some have a planned fix.
   requests (such as checking for updates) can still make them fetch from the
   network.
 - **Channels to the host.** Boxes' shared clipboard and folder sharing
-  (SPICE), USB devices passed through to the VM (phones over adb), and a
-  vsock device if the VM has one, all bypass the network. They are under the
+  (SPICE), USB devices passed through to the VM (phones over adb, or a
+  Bluetooth adapter, which `dev` may use without asking polkit), and a vsock
+  device if the VM has one, all bypass the network. They are under the
   control of whoever runs the VM on the host.
-- **The emulator.** Android guests in the emulator get only proxied HTTP(S)
-  to allowlisted domains, so the Play Store and similar don't work.
+- **The emulator.** Android guests in the emulator get only HTTPS, through
+  the proxy, to allowlisted domains, so the Play Store and similar don't work.
 - **admin.** admin's traffic isn't filtered. admin must not give `dev`
   subordinate UIDs (`usermod --add-subuids`): processes under those UIDs
   aren't matched by the rule.

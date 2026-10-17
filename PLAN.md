@@ -3,8 +3,7 @@
 This is the roadmap for the bootc Android dev VM. CLAUDE.md lists the
 constraints that don't change.
 
-- Status: PRs 1–7 and the bootc-install qcow2 build merged, PR 8 (docs) in
-  review.
+- Status: PRs 1–8 merged. Fixes from the first full review in progress.
 - Research checked against upstream docs on 2026-09-28.
 
 ## Decisions
@@ -566,17 +565,18 @@ Each question has a recommendation.
      resolver that forwards only allowlisted zones, and give Squid its own
      upstream resolver.
 2. **General-purpose upload channels.**
-   - `github.com`, `.githubusercontent.com` and the Anthropic API can all carry
-     data out.
+   - `github.com`, `.githubusercontent.com`, the Anthropic API and claude.ai
+     can all carry data out. So can the Gradle Plugin Portal, JetBrains'
+     marketplace and addons.mozilla.org, with an account.
    - *Recommendation:* narrow `.githubusercontent.com` to `raw.`, `objects.` and
      `release-assets.` once the VM test shows that's enough. Document the rest
      as accepted risk.
 3. **Other channels to document.**
-   - Boxes clipboard and file sharing (spice-vdagent).
+   - Boxes clipboard (spice-vdagent) and folder sharing (spice-webdavd).
    - Phones attached over USB, via adb.
    - Root-side daemons generally.
-   - Emulator guests only get proxied HTTP(S) to allowlisted domains, so Play
-     Store and similar won't work.
+   - Emulator guests only get HTTPS, through the proxy, to allowlisted
+     domains, so Play Store and similar won't work.
 4. **Claude Code bypass-permissions mode.**
    - *Recommendation:* leave it available, because the VM is the sandbox.
 5. **Trust in the published image until signing lands.**
