@@ -63,4 +63,5 @@ COPY system_files/ /
 RUN --mount=type=bind,from=ctx,source=/,target=/ctx \
     /ctx/build.sh
 
-RUN bootc container lint
+# Warnings fail the build too, so a new one gets looked at.
+RUN bootc container lint --fatal-warnings

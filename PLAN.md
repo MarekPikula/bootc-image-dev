@@ -23,7 +23,7 @@ constraints that don't change.
 ## Repository layout
 
 ```
-Containerfile              FROM kinoite:44; RUN android-studio.sh; RUN packages.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint
+Containerfile              FROM kinoite:44; RUN android-studio.sh; RUN packages.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint --fatal-warnings
 versions.env               build inputs: base image tag, Android Studio URL + sha256,
                            Claude Code's dnf repo and signing-key fingerprint
 build_files/
@@ -227,7 +227,10 @@ README.md                  for the people running the VM
     packages, and root already trusts what this key signs.
   - That dnf call sees only Anthropic's repo (`--repo`), and the build stops
     if the transaction changed any package but claude-code (an `Obsoletes:`
-    could). The repo isn't left configured in the image.
+    could, or a dependency pulling a newer glibc from Anthropic's repo). It
+    compares name, version, arch and header digest, so upgrades and
+    reinstalls count. The pinned key's `gpg-pubkey` entry is expected. The
+    repo isn't left configured in the image.
   - The image checks assert the installed package carries that key's
     signature, and that it's the only key besides Fedora's that rpm trusts.
 - **Managed settings.** Claude Code reads them only from `/etc/claude-code`:

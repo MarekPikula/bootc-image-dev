@@ -38,7 +38,9 @@ fingerprints="$(gpg --homedir "$(mktemp -d -p /run)" --show-keys --with-colons "
   awk -F: '$1 == "fpr" { print $10 }')"
 [[ $fingerprints == "${CLAUDE_CODE_KEY_FINGERPRINT:?}" ]] ||
   { echo "claude-code.asc: unexpected key(s): $fingerprints" >&2; exit 1; }
-packages() { rpm -qa --qf '%{NAME}\n' | sort -u; }
+# Name, then version, arch and header digest, so an upgrade, downgrade or
+# reinstall of another package shows up as a change too.
+packages() { rpm -qa --qf '%{NAME} %{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH} %{SIGMD5}\n' | sort; }
 before="$(packages)"
 # --repo: this transaction sees only Anthropic's repo. repo_gpgcheck: the
 # repo's metadata is signed too.
@@ -46,8 +48,11 @@ dnf -y install --repofrompath="claude-code,${CLAUDE_CODE_REPO:?}" --repo=claude-
   --setopt=claude-code.gpgcheck=1 --setopt=claude-code.repo_gpgcheck=1 \
   --setopt="claude-code.gpgkey=file://$key" claude-code
 # claude-code needs only glibc. An Obsoletes: in it could still remove or
-# replace other packages, so the transaction must have added claude-code and
-# changed nothing else.
-changed="$(diff <(echo "$before") <(packages) | grep '^[<>]' || true)"
-[[ $changed == "> claude-code" ]] ||
+# replace other packages, and a dependency could pull a newer glibc from
+# Anthropic's repo. So the transaction must have added one claude-code, and
+# changed nothing else but the pinned key (which rpm lists as gpg-pubkey
+# <fingerprint>).
+changed="$(diff <(echo "$before") <(packages) | grep '^[<>]' |
+  grep -v "^> gpg-pubkey 0:${CLAUDE_CODE_KEY_FINGERPRINT,,}-" || true)"
+[[ $changed == "> claude-code "* && $changed != *$'\n'* ]] ||
   { printf 'claude-code changed other packages:\n%s\n' "$changed" >&2; exit 1; }

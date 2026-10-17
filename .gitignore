@@ -1,3 +1,5 @@
 # Outputs of tests/vm/run-vm.sh and disk/build-qcow2.sh, and downloaded CI artifacts.
 /vm-logs/
 *.qcow2
+# The OCI layout _build-test.yml's Export step writes.
+/image/

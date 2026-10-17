@@ -57,7 +57,7 @@ questions. Read it before starting work, and update it when a decision changes.
 - Pin every third-party download by version and sha256, and verify it during
   the build. The exception is Claude Code: each build takes the current
   release from Anthropic's signed repo, checked against the pinned key.
-- The last Containerfile step is `RUN bootc container lint`.
+- The last Containerfile step is `RUN bootc container lint --fatal-warnings`.
 
 ## This environment
 
