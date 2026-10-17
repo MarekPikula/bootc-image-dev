@@ -3,9 +3,10 @@
 # `systemctl disable` nor a preset reset can turn it off.
 [Unit]
 Description=Set the admin and dev passwords on first boot
-# systemd-firstboot asks for keymap and locale first, so passwords are typed
-# with the right layout. plymouth-quit.service has taken the boot splash off
-# tty1 by then, or killed a plymouthd that hung (see its drop-in).
+# systemd-firstboot (see its drop-in) asks for language, keyboard layout and
+# time zone first, so passwords are typed with the right layout.
+# plymouth-quit.service has taken the boot splash off tty1 by then, or killed
+# a plymouthd that hung (see its drop-in).
 After=systemd-sysusers.service systemd-firstboot.service systemd-user-sessions.service plymouth-quit.service
 Before=display-manager.service getty@tty1.service
 # Marked done only on success, so a failed run asks again next boot.

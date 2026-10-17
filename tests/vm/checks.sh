@@ -59,6 +59,23 @@ firstboot_succeeded() {
 }
 check "first-boot unit ran and succeeded" firstboot_succeeded
 
+# systemd-firstboot runs on our first boot (see its drop-in) and applied the
+# firstboot.* credentials from run-vm.sh: the keymap for the console and, as
+# converted, the login screen, and the time zone.
+firstboot_settings() {
+  local status keymap x11 tz
+  status="$(localectl status)"
+  keymap="$(sed -n 's/^ *VC Keymap: //p' <<<"$status")"
+  x11="$(sed -n 's/^ *X11 Layout: //p' <<<"$status")"
+  tz="$(timedatectl show -p Timezone --value)"
+  [[ $keymap == de && $x11 == de && $tz == Europe/Warsaw ]] || {
+    echo "      keymap '$keymap', X11 layout '$x11', time zone '$tz'"
+    journalctl -b -u systemd-firstboot.service --no-pager | indent
+    return 1
+  }
+}
+check "systemd-firstboot set the keymap (console and login screen) and time zone" firstboot_settings
+
 accounts() {
   [[ "$(id -u admin)" == 1000 && "$(id -nG admin)" == "admin wheel" &&
     "$(id -u dev)" == 1500 && "$(id -nG dev)" == dev ]] || {
@@ -160,6 +177,7 @@ org.freedesktop.login1.power-off
 org.freedesktop.login1.reboot
 org.freedesktop.login1.suspend
 org.freedesktop.udisks2.eject-media
+org.freedesktop.login1.set-wall-message
 org.freedesktop.udisks2.filesystem-mount"
 polkit_in_session() {
   local pid session action rc yes="" bad=0
@@ -179,7 +197,6 @@ polkit_in_session() {
     "$(loginctl show-session -p Active -p Remote -p Seat "$session" | LC_ALL=C sort | xargs)" != \
     "Active=yes Remote=no Seat=seat0" ]]; then
     echo "      no active local session for dev: $(loginctl show-session "$session" 2>&1 | xargs)"
-org.freedesktop.login1.set-wall-message
     bad=1
   else
     for action in $(pkaction); do

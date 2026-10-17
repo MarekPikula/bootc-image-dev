@@ -51,21 +51,31 @@ no_shipped_accounts() {
 }
 
 # The prompt sets passwords, so it runs in a throwaway container, not the
-# shared one. $1 is the tests/image/firstboot.sh mode, $2 the typed input.
+# shared one. $1 is the typed input, the rest the tests/image/firstboot.sh
+# mode and its argument.
 firstboot_prompt() {
+  local input=$1
+  shift
   podman run --rm -i --network=none -v "$PWD/tests/image:/tests:ro,z" "$image" \
-    /tests/firstboot.sh "$1" <<<"$2"
+    /tests/firstboot.sh "$@" <<<"$input"
 }
 
 # A weak password, a mismatch and dev reusing admin's are rejected first.
 expect_firstboot_sets_passwords() {
   local a=Lantern-Quiver-4817-Mosaic b=Harbor-Violet-2093-Kestrel
-  firstboot_prompt sets "$(printf '%s\n' password password "$a" "$a" \
-    "$a" "$a" "$b" "${b}x" "$b" "$b")"
+  firstboot_prompt "$(printf '%s\n' password password "$a" "$a" \
+    "$a" "$a" "$b" "${b}x" "$b" "$b")" sets
+}
+
+# admin's password came from an earlier boot (or a credential), so only dev's
+# is asked for, and it still mustn't be admin's.
+expect_firstboot_dev_differs() {
+  local a=Lantern-Quiver-4817-Mosaic b=Harbor-Violet-2093-Kestrel
+  firstboot_prompt "$(printf '%s\n' "$a" "$a" "$b" "$b")" dev-only "$a"
 }
 
 expect_firstboot_gives_up() {
-  firstboot_prompt gives-up "$(printf '\n%.0s' {1..12})"
+  firstboot_prompt "$(printf '\n%.0s' {1..12})" gives-up
 }
 
 base="$(sed -n 's/^BASE_IMAGE=//p' versions.env)"
@@ -178,6 +188,8 @@ label="$(matchpathcon -n /usr/libexec/android-dev-vm/set-passwords)"
 EOF
 check "first-boot prompt rejects bad input, then sets both passwords" \
   expect_firstboot_sets_passwords
+check "first-boot prompt: dev's password differs from admin's set earlier" \
+  expect_firstboot_dev_differs
 check "first-boot prompt gives up after repeated failures, unmarked" \
   expect_firstboot_gives_up
 check "sysusers imports the admin and dev password credentials" in_image <<'EOF'

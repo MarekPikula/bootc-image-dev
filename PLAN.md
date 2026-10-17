@@ -56,6 +56,7 @@ system_files/              overlay copied to / (paths below are relative to /)
     android-dev-firstboot.service
     multi-user.target.wants/android-dev-firstboot.service   image-owned enablement
     systemd-sysusers.service.d/50-android-dev-vm.conf       imports admin/dev password credentials
+    systemd-firstboot.service.d/10-android-dev-vm.conf      runs it on our first boot (machine-id is empty)
     user@1500.service.d/10-dev-egress.conf                  dev's user manager needs the rule too
   usr/lib/bootc/kargs.d/10-console.toml   serial console too, for headless logs
   usr/lib/bootc/kargs.d/10-ssh.toml       no automatic sshd sockets (systemd.ssh_auto=no)
@@ -271,15 +272,18 @@ README.md                  for the people running the VM
     unit with `mkhomedir_helper`.
 - **First boot.** `android-dev-firstboot.service` runs on tty1 before the
   display manager and asks for both passwords.
-  - Each password is typed twice, and dev's must differ from admin's. It's set
-    with `passwd --stdin`, so pwquality still applies, and `enforce_for_root`
-    makes it reject weak passwords instead of only warning.
+  - Each password is typed twice, and dev's must differ from admin's, also
+    when admin's was set on an earlier boot (`unix_chkpwd` compares it with
+    admin's hash). It's set with `passwd --stdin`, so pwquality still
+    applies, and `enforce_for_root` makes it reject weak passwords instead of
+    only warning.
   - `passwd --stdin` exits 0 even when PAM rejects the password
     (shadow-utils 4.19), so the script checks shadow for a hash instead.
-  - After 5 failed attempts per account it gives up. It ignores Ctrl+C, logs
-    failures to the journal, and marks itself done only on success, so the
-    next boot asks again. Until then the login screen appears, but nobody can
-    log in.
+  - After 5 failed attempts per account it gives up. It ignores Ctrl+C,
+    Ctrl+\ and Ctrl+Z, logs failures to the journal, and marks itself done
+    only on success, so the next boot asks again, for the passwords still
+    missing. Until then the login screen appears, but an account without a
+    password can't log in.
   - `systemd-mute-console` keeps kernel and systemd status messages off the
     prompt while it runs.
   - The unit starts after `plymouth-quit.service` has taken the boot splash
@@ -303,10 +307,21 @@ README.md                  for the people running the VM
     throwaway container, including the rejection paths and the give-up path.
 - **KDE's own first-boot flow is off.** Kinoite's `plasma-setup.service`
   (autologin plus a wizard that creates an admin user) is masked.
-  `systemd-firstboot` still asks for locale, keymap and timezone, so the
-  passwords are typed with the right layout. It skips its root-password
+  `systemd-firstboot` asks for locale, keymap and timezone first, so the
+  passwords are typed with the right layout. It sets the console's layout at
+  once and converts it for the login screen. It skips its root-password
   prompt because root already has a locked shadow entry (`*`), which the image
   checks assert. Root stays locked.
+  - Upstream's unit has `ConditionFirstBoot=yes`, which never holds here: the
+    image ships an empty `/etc/machine-id`, which systemd reads as "not the
+    first boot". A drop-in replaces the condition with "until
+    `firstboot.done` exists".
+  - systemd-firstboot asks only for settings that have no file, and tmpfiles
+    (`etc.conf`) has by then copied systemd's fallback `locale.conf` and
+    `vconsole.conf` from `/usr/share/factory`. The drop-in removes them first
+    while they're those untouched copies.
+  - The VM test passes a German keymap and Warsaw's time zone and checks
+    both, including the login screen's layout.
 - **Sudo.** `dev` isn't in `wheel`. The image checks assert that
   `sudo -l -U dev` grants nothing.
 - **su.** `pam_wheel.so use_uid` is `requisite` in `/etc/pam.d/su`, so non-wheel

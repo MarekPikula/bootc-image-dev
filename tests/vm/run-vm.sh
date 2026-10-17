@@ -6,7 +6,8 @@
 # Nothing test-specific is in the image. SMBIOS system credentials make
 # systemd-ssh-generator open sshd on TCP 22 and authorize a per-run SSH key.
 # They also answer both first-boot prompts: locale, keymap and timezone for
-# systemd-firstboot, and throwaway passwords for admin and dev.
+# systemd-firstboot (not the defaults, so the checks can tell it ran), and
+# throwaway passwords for admin and dev.
 #
 # Usage: tests/vm/run-vm.sh QCOW2 [LOG_DIR]
 # Env: SSH_PORT (default 2222), BOOT_TIMEOUT seconds (default 600).
@@ -64,8 +65,8 @@ qemu-system-x86_64 \
 f~ /var/roothome/.ssh/authorized_keys 0600 root root - $(base64 -w0 "$work/key.pub")")" \
   -smbios "$(cred ssh.listen 22)" \
   -smbios "$(cred firstboot.locale C.UTF-8)" \
-  -smbios "$(cred firstboot.keymap us)" \
-  -smbios "$(cred firstboot.timezone UTC)" \
+  -smbios "$(cred firstboot.keymap de)" \
+  -smbios "$(cred firstboot.timezone Europe/Warsaw)" \
   -smbios "$(cred passwd.plaintext-password.admin "$(head -c 18 /dev/urandom | base64)")" \
   -smbios "$(cred passwd.plaintext-password.dev "$(head -c 18 /dev/urandom | base64)")" \
   -daemonize -pidfile "$work/qemu.pid"
