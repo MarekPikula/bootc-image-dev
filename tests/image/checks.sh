@@ -211,6 +211,14 @@ for link in system/multi-user.target.wants/android-dev-firstboot.service \
 done
 exit "$bad"
 EOF
+# The drop-in repeats Fedora's command to add --chrome=no, so a change to
+# Fedora's must show up here.
+firstboot_without_chrome() {
+  local fedora
+  fedora="$(podman exec "$ctr" cat /usr/lib/systemd/system/systemd-firstboot.service | exec_starts)"
+  expect_exec_start systemd-firstboot.service "$fedora --chrome=no"
+}
+check "systemd-firstboot runs Fedora's command, plus --chrome=no" firstboot_without_chrome
 # Under /usr/lib it would be lib_t and run as init_t, which may not run passwd.
 check "first-boot script is labelled bin_t (SELinux)" in_image <<'EOF'
 label="$(matchpathcon -n /usr/libexec/android-dev-vm/set-passwords)"
