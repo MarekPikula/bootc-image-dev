@@ -78,8 +78,10 @@ then shut the VM down and start it again.
 ## Daily use
 
 - **Android Studio** is in the application menu. Its setup wizard downloads
-  the SDK through the proxy. Google Play and other Google services in the
-  emulator don't work, because their domains aren't on the list.
+  the SDK through the proxy. It comes with the Claude Code, Flutter and Dart
+  plugins. The Flutter SDK isn't included. Google Play and other Google
+  services in the emulator don't work, because their domains aren't on the
+  list.
 - **Claude Code.** Open a terminal and run `claude`. To sign in, it prints a
   link: open it in a browser **on your host**, sign in, and paste the code the
   page shows back into the terminal (Boxes shares the clipboard). Android
