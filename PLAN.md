@@ -60,6 +60,7 @@ system_files/              overlay copied to / (paths below are relative to /)
     user@1500.service.d/10-dev-egress.conf                  dev's user manager needs the rule too
   usr/lib/bootc/kargs.d/10-console.toml   serial console too, for headless logs
   usr/lib/bootc/kargs.d/10-ssh.toml       no automatic sshd sockets (systemd.ssh_auto=no)
+  usr/lib/systemd/resolved.conf.d/10-android-dev-vm.conf   LLMNR off
   usr/lib/bootc/install/50-android-dev-vm.toml   bootc install defaults (btrfs root)
   usr/lib/systemd/user-environment-generators/60-dev-proxy
   usr/share/polkit-1/rules.d/00-android-dev.rules
@@ -118,6 +119,9 @@ README.md                  for the people running the VM
   re-allow dev's traffic. `nftables.service` is masked: its reload and stop
   run `nft flush ruleset`, which would delete dev's table while sessions keep
   running.
+- **No LLMNR.** systemd-resolved's LLMNR responder (port 5355 on every
+  interface) is off through a `resolved.conf.d` drop-in in `/usr`. Nothing
+  here needs it, and it answers on the VM's network.
 - **Failing closed.**
   - `dev-egress-firewall.service` loads the table before `network-pre.target`.
   - `systemd-user-sessions.service` gets `Requires=` and `After=` on that
