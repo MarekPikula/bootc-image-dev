@@ -119,6 +119,16 @@ su_refused() {
 }
 check "dev: su is refused without a password prompt" su_refused
 
+# kargs.d/10-ssh.toml. The test's own sshd-extra.socket comes from the
+# ssh.listen credential.
+no_auto_ssh() {
+  local sockets
+  sockets="$(systemctl list-units --all --plain --no-legend 'sshd-*.socket' | cut -d' ' -f1 | xargs)"
+  [[ $sockets == sshd-extra.socket && ! -e /run/ssh-unix-local/socket ]] ||
+    { echo "      sshd sockets: $sockets"; return 1; }
+}
+check "no automatic sshd sockets, only the test's own" no_auto_ssh
+
 # dev asks about its own process, a real subject (the image test had to use bus
 # names). pkcheck exit 1 means "not authorized", 2 would be an admin prompt.
 polkit_denies_dev() {

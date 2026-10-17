@@ -1,0 +1,5 @@
+# No sshd sockets from systemd-ssh-generator on its own (a world-writable
+# AF_UNIX one, and vsock), which would put admin's login within dev's reach.
+# Explicit ones, like the CI VM test's ssh.listen credential, still work. See
+# PLAN.md, Privilege.
+kargs = ["systemd.ssh_auto=no"]

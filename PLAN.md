@@ -57,6 +57,7 @@ system_files/              overlay copied to / (paths below are relative to /)
     multi-user.target.wants/android-dev-firstboot.service   image-owned enablement
     systemd-sysusers.service.d/50-android-dev-vm.conf       imports admin/dev password credentials
   usr/lib/bootc/kargs.d/10-console.toml   serial console too, for headless logs
+  usr/lib/bootc/kargs.d/10-ssh.toml       no automatic sshd sockets (systemd.ssh_auto=no)
   usr/lib/bootc/install/50-android-dev-vm.toml   bootc install defaults (btrfs root)
   usr/lib/systemd/user-environment-generators/60-dev-proxy
   usr/share/polkit-1/rules.d/00-android-dev.rules
@@ -301,6 +302,13 @@ README.md                  for the people running the VM
   `sudo -l -U dev` grants nothing.
 - **su.** `pam_wheel.so use_uid` is `requisite` in `/etc/pam.d/su`, so non-wheel
   users are refused before any password prompt.
+- **No automatic sshd.** systemd-ssh-generator binds sshd to
+  `/run/ssh-unix-local/socket` (mode 0666) on every boot, and to vsock port
+  22 when the VM has a vsock device, although `sshd` is disabled. With
+  password logins on, `ssh admin@.host` from dev's session would reach
+  admin's login. Only an SELinux denial stopped it. `kargs.d/10-ssh.toml`
+  sets `systemd.ssh_auto=no`. The VM test's `ssh.listen` credential still
+  works, and the VM checks assert it's the only sshd socket.
 - **polkit's password helper.** The setuid `polkit-agent-helper-1` runs PAM
   for whichever user its caller names and reports whether the password was
   right. dev could have guessed admin's password through it, limited only by
@@ -508,6 +516,8 @@ VM test assertions (`tests/vm/checks.sh`):
   - dev: `sudo`, `run0` and `pkexec` are denied (non-zero, no hang waiting for
     a password), `su` is refused before any prompt, and `pkcheck` on a real
     dev process says no to managing units.
+  - The only sshd socket is the test's own (`ssh.listen`), none from
+    systemd-ssh-generator's automatic ones.
   - `/dev/kvm` is mode 0666 and dev isn't refused when opening it. Without
     nested virtualization the node still exists (udev `static_node`) but the
     open fails with a different error, which the check accepts.

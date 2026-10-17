@@ -16,7 +16,8 @@ them.
 - `dev` (UID 1500) isn't in `wheel`, so sudo refuses it. `su` is limited to
   `wheel` and refuses `dev` before asking for a password. So is polkit's
   password helper, which would otherwise let `dev` try admin's password as
-  often as it likes.
+  often as it likes. systemd's automatic local SSH sockets are off, so
+  there's no SSH login to reach from dev's session either.
 - polkit answers `dev` with a flat no for every action except a few harmless
   ones (power off, reboot, suspend, removable media, audio priority), and allows
   those only in dev's own desktop session. `pkexec`, `run0` and the desktop's
