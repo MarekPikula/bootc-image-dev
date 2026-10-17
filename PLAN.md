@@ -61,10 +61,10 @@ system_files/              overlay copied to / (paths below are relative to /)
     android-dev-firstboot.service
     multi-user.target.wants/android-dev-firstboot.service   image-owned enablement
     systemd-sysusers.service.d/50-android-dev-vm.conf       imports admin/dev password credentials
-    systemd-firstboot.service.d/10-android-dev-vm.conf      runs it on our first boot (machine-id is empty)
+    systemd-firstboot.service.d/10-android-dev-vm.conf      runs it on our first boot (machine-id is empty), no header and footer
     avahi-daemon.service.d/10-android-dev-vm.conf           our avahi config
     user@1500.service.d/10-dev-egress.conf                  dev's user manager needs the rule too
-  usr/lib/bootc/kargs.d/10-console.toml   serial console too, for headless logs
+  usr/lib/bootc/kargs.d/10-console.toml   serial console too, for headless logs, kernel errors only
   usr/lib/bootc/kargs.d/10-ssh.toml       no automatic sshd sockets (systemd.ssh_auto=no)
   usr/lib/systemd/resolved.conf.d/10-android-dev-vm.conf   LLMNR off
   usr/lib/systemd/user/android-dev-clipboard.service   runs clipboard-to-x11 in every graphical session
@@ -325,7 +325,8 @@ README.md                  for the people running the VM
 
 ### Boxes
 
-What GNOME Boxes gives the VM over SPICE, and what the VM does to use it.
+What GNOME Boxes gives the VM over SPICE and how the VM uses it, and what
+else running in Boxes needed.
 
 - **Shared folders.** Boxes shares a host folder over a SPICE port
   (`org.spice-space.webdav.0`). udev starts `spice-webdavd` when the port
@@ -352,6 +353,19 @@ What GNOME Boxes gives the VM over SPICE, and what the VM does to use it.
     trailing newlines included, and text an X11 client sets (as
     spice-vdagent does) reaches Wayland without the bridge taking it over.
   - Text only: images copied in the VM don't reach the host.
+- **First-boot screen.**
+  - systemd-firstboot runs with `--chrome=no`, without its header and
+    footer bars. In Boxes its screen came out scrambled, likely because
+    Boxes resized the console under the bars (not reproduced). The
+    drop-in repeats Fedora's command to add it, and the image checks
+    compare the two.
+  - Kernel messages printed over the questions (reproduced). The
+    `loglevel=4` kernel argument (`kargs.d/10-console.toml`) keeps all but
+    errors and worse off the consoles, as `quiet` does, but leaves
+    systemd's boot messages, on the screen and on the CI test's serial log.
+    An error can still land on the prompt. A sysctl.d file didn't stick:
+    Plymouth puts back the level from before its splash, which starts in
+    the initrd (seen in a VM).
 
 ### Privilege
 
@@ -633,15 +647,16 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. The clipboard bridge's user unit is pulled in from `/usr`. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. systemd-firstboot runs Fedora's command plus `--chrome=no`. The clipboard bridge's user unit is pulled in from `/usr`. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
-| Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, a shared folder in Dolphin, text copied both ways, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
+| Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization, Claude login, the first-boot screens and password flow in Boxes, a shared folder in Dolphin, text copied both ways, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
 VM test assertions (`tests/vm/checks.sh`):
 
 - **Accounts and privilege.**
   - Boot finishes with no failed units, SELinux is enforcing, the `kargs.d`
-    console arguments are applied, and bootc tracks the GHCR image.
+    console arguments are applied, only kernel errors and worse reach the
+    console, and bootc tracks the GHCR image.
   - `android-dev-firstboot.service` ran and succeeded, sysusers created the
     accounts, both passwords were set from credentials, and the homes exist,
     are private and are labelled `user_home_dir_t`. Root is still locked.

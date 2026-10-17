@@ -40,6 +40,14 @@ console_kargs() {
 }
 check "kernel arguments from kargs.d are applied" console_kargs
 
+# loglevel=4 in kargs.d/10-console.toml. Fedora's default is 7.
+console_loglevel() {
+  local level
+  read -r level _ </proc/sys/kernel/printk
+  ((level == 4)) || { echo "      kernel.printk: $(cat /proc/sys/kernel/printk)"; return 1; }
+}
+check "only kernel errors and worse reach the console" console_loglevel
+
 tracks_registry() {
   local ref
   ref="$(bootc status --json | jq -r '.status.booted.image.image.image')"
