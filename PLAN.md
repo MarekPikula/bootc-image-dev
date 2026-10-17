@@ -68,7 +68,8 @@ system_files/              overlay copied to / (paths below are relative to /)
   usr/lib/systemd/user-environment-generators/60-dev-proxy
   usr/share/polkit-1/rules.d/00-android-dev.rules
   usr/share/applications/android-studio.desktop
-  usr/bin/android-studio             symlink to /usr/lib/android-studio/bin/studio
+  usr/bin/android-studio             symlink to the launcher below
+  usr/libexec/android-dev-vm/android-studio   starts Studio, turns on plugin updates in a new profile
   usr/bin/android-dev-denied         lists recent TCP_DENIED domains from the Squid log
   etc/profile.d/dev-proxy.sh
   etc/xdg/kioslaverc
@@ -292,10 +293,19 @@ README.md                  for the people running the VM
   with that ID, and unpacks it into `/usr/lib/android-studio/plugins/<ID>`.
   Studio loads plugins there as its own bundled ones. A copy of the list
   goes to `/usr/lib/android-dev-vm/`, where the checks read it.
-- **Updates.** Studio offers plugin updates from the JetBrains Marketplace
-  (allowlisted) and installs them into dev's profile, where a newer version
+- **Updates.** Studio updates its plugins on its own, from the JetBrains
+  Marketplace (allowlisted), into dev's profile, where a newer version
   takes precedence over the image's. The image's versions are the starting
-  point for a new profile.
+  point for a new profile. Studio's default is to only offer updates, and
+  nothing in its installation can change that default (it's a hard-coded
+  `false`). So `/usr/bin/android-studio` (a launcher in
+  `/usr/libexec/android-dev-vm`) adds `PLUGINS_AUTO_UPDATE` to the
+  profile's `options/updates.xml`, once per profile, from the second start
+  on. Not before the first: a profile that exists before Studio's first
+  start makes it skip its first-start setup, the SDK wizard included (seen
+  in a VM). If dev turns the setting off later, it stays off. Settings →
+  Appearance & Behavior → System Settings → Updates → Update plugins
+  automatically.
 
 ### Privilege
 
@@ -628,7 +638,8 @@ VM test assertions (`tests/vm/checks.sh`):
     direct connection attempt, and in that first minute gets nothing refused
     except its plain-HTTP connectivity check. The test VM has 6 GiB for it.
   - Studio's log from that run lists every plugin in `studio-plugins.txt` as
-    loaded.
+    loaded. A second start through the launcher turns on automatic plugin
+    updates in that profile.
 - **Claude Code.** Run as dev with an empty environment and a dummy API key,
   it calls `api.anthropic.com` through Squid (so the proxy came from the
   managed settings) and makes no direct attempt. What Squid refuses isn't

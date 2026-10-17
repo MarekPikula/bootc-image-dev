@@ -451,6 +451,18 @@ studio_loaded_plugins() {
 }
 check "Android Studio loaded the plugins in studio-plugins.txt" studio_loaded_plugins
 
+# Studio's first start above ran its own setup in the profile it made (the
+# dl.google.com tunnel). From the second start, /usr/bin/android-studio turns
+# on automatic plugin updates. --version starts nothing, but goes through it.
+studio_plugins_auto_update() {
+  as_dev /usr/bin/android-studio --version
+  ((rc == 0)) || { echo "      rc $rc: $out"; return 1; }
+  grep -qs '<option name="PLUGINS_AUTO_UPDATE" value="true" />' \
+    /var/home/dev/.config/Google/AndroidStudio*/options/updates.xml ||
+    { cat /var/home/dev/.config/Google/AndroidStudio*/options/updates.xml 2>&1 | indent; return 1; }
+}
+check "Android Studio updates plugins automatically for dev" studio_plugins_auto_update
+
 # Claude Code with no proxy in its environment: the managed settings alone
 # must send it through Squid, with no direct attempt. The VM has no login, so
 # a dummy key makes it call the API. The API refuses the key, and the tunnel
