@@ -32,7 +32,7 @@ build_files/
   claude-code.asc          Anthropic's public signing key for the claude-code repo
   android-studio.sh        download, sha256 check, unpack to /usr/lib/android-studio, updates
                            off. Its own RUN, see the Containerfile
-  studio-plugins.txt       Studio's plugins (Claude Code): ID, sha256, URL
+  studio-plugins.txt       Studio's plugins (Claude Code, Flutter, Dart): ID, sha256, URL
   studio-plugins.sh        download, sha256 check, unpack each into Studio's plugins
                            directory. Its own RUN too
   build.sh                 runs the numbered steps in order
@@ -281,7 +281,11 @@ README.md                  for the people running the VM
 
 ### Studio plugins
 
-- **Which.** Claude Code [Beta] (Anthropic, marketplace ID 27310).
+- **Which.** Claude Code [Beta] (Anthropic, marketplace ID 27310), Flutter
+  (Google, 9212) and Dart (JetBrains, 6351), which Flutter needs. The
+  Flutter plugin needs a Flutter SDK, which isn't in the image: its
+  releases and its Android build artifacts come from
+  `storage.googleapis.com`, which CLAUDE.md rules out.
 - **Install.** `build_files/studio-plugins.txt` pins each release zip by ID,
   sha256 and URL.
   `studio-plugins.sh` checks each hash and that the zip holds the plugin
