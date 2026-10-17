@@ -82,7 +82,10 @@ then shut the VM down and start it again.
   emulator don't work, because their domains aren't on the list.
 - **Claude Code.** Open a terminal and run `claude`. To sign in, it prints a
   link: open it in a browser **on your host**, sign in, and paste the code the
-  page shows back into the terminal (Boxes shares the clipboard).
+  page shows back into the terminal (Boxes shares the clipboard). Android
+  Studio comes with Claude Code's plugin: run `claude` in Studio's own
+  terminal, or press Ctrl+Esc, and Claude's edits show up in Studio's diff
+  viewer, with your current selection as context.
 - **Don't sign in to accounts in the VM's Firefox**, GitHub above all: every
   process of `dev`, Claude Code included, could use that session (see
   [docs/security-model.md](docs/security-model.md)).

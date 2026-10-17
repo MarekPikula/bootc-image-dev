@@ -16,13 +16,17 @@ ARG BASE_IMAGE
 FROM scratch AS ctx
 COPY build_files/ /
 
-# packages.sh (with Claude Code's signing key) and android-studio.sh alone, so
-# editing another build step doesn't redo their layers.
+# packages.sh (with Claude Code's signing key), android-studio.sh and
+# studio-plugins.sh (with its list) alone, so editing another build step
+# doesn't redo their layers.
 FROM scratch AS pkgs
 COPY build_files/packages.sh build_files/claude-code.asc /
 
 FROM scratch AS studio
 COPY build_files/android-studio.sh /
+
+FROM scratch AS studio-plugins
+COPY build_files/studio-plugins.sh build_files/studio-plugins.txt /
 
 FROM ${BASE_IMAGE}
 
@@ -47,6 +51,11 @@ RUN --mount=type=bind,from=pkgs,source=/,target=/ctx \
     --mount=type=tmpfs,target=/var/lib/dnf \
     --mount=type=tmpfs,target=/var/log \
     /ctx/packages.sh
+
+# Studio's plugins, after the packages so a bump redoes only this.
+RUN --mount=type=bind,from=studio-plugins,source=/,target=/ctx \
+    --mount=type=tmpfs,target=/var/tmp \
+    /ctx/studio-plugins.sh
 
 # Shown by `bootc status` as the deployment version. CI sets it; otherwise the
 # base image's version (e.g. Kinoite's 44.YYYYMMDD.N) would show instead.

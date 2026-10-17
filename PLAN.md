@@ -23,7 +23,7 @@ constraints that don't change.
 ## Repository layout
 
 ```
-Containerfile              FROM kinoite:44; RUN android-studio.sh; RUN packages.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint --fatal-warnings
+Containerfile              FROM kinoite:44; RUN android-studio.sh; RUN packages.sh; RUN studio-plugins.sh; COPY system_files/ /; RUN build.sh; RUN bootc container lint --fatal-warnings
 versions.env               build inputs: base image tag, Android Studio URL + sha256,
                            Claude Code's dnf repo and signing-key fingerprint
 build_files/
@@ -32,6 +32,9 @@ build_files/
   claude-code.asc          Anthropic's public signing key for the claude-code repo
   android-studio.sh        download, sha256 check, unpack to /usr/lib/android-studio, updates
                            off. Its own RUN, see the Containerfile
+  studio-plugins.txt       Studio's plugins (Claude Code): ID, sha256, URL
+  studio-plugins.sh        download, sha256 check, unpack each into Studio's plugins
+                           directory. Its own RUN too
   build.sh                 runs the numbered steps in order
   15-su.sh                 su for wheel only (pam_wheel requisite)
   16-polkit-helper.sh      polkit's password helper for wheel only (4750 root:wheel)
@@ -265,11 +268,30 @@ README.md                  for the people running the VM
   - `registry.npmjs.org`: plugins and MCP servers that come from npm.
   - `*.frame.claudeusercontent.com`: reading artifacts.
   - `bridge.claudeusercontent.com`: Claude in Chrome (there's no Chrome).
+- **Studio plugin.** Anthropic's JetBrains plugin, "Claude Code [Beta]",
+  comes with Studio (see Studio plugins). It shows Claude's edits in
+  Studio's diff viewer and shares the current selection and Studio's
+  diagnostics. It runs `/usr/bin/claude`, so the managed settings apply,
+  and talks to it over loopback.
 - **Signing in** happens in a browser on the host, for the reason in
   `docs/security-model.md` ("Logins in dev's session"). In dev's Firefox it
   doesn't work anyway: the sign-in page needs `*.hcaptcha.com` for email
   sign-in and `accounts.google.com` for Google sign-in, and neither is
   allowlisted.
+
+### Studio plugins
+
+- **Which.** Claude Code [Beta] (Anthropic, marketplace ID 27310).
+- **Install.** `build_files/studio-plugins.txt` pins each release zip by ID,
+  sha256 and URL.
+  `studio-plugins.sh` checks each hash and that the zip holds the plugin
+  with that ID, and unpacks it into `/usr/lib/android-studio/plugins/<ID>`.
+  Studio loads plugins there as its own bundled ones. A copy of the list
+  goes to `/usr/lib/android-dev-vm/`, where the checks read it.
+- **Updates.** Studio offers plugin updates from the JetBrains Marketplace
+  (allowlisted) and installs them into dev's profile, where a newer version
+  takes precedence over the image's. The image's versions are the starting
+  point for a new profile.
 
 ### Privilege
 
@@ -426,7 +448,8 @@ README.md                  for the people running the VM
 - **Weekly rebuild.** The CI rebuild picks up the current Kinoite 44 image and
   the current `claude-code` RPM from the stable channel.
 - **Other bumps.** Android Studio and the Fedora major version change through
-  PRs that edit `versions.env`.
+  PRs that edit `versions.env`, Studio's plugins through PRs that edit
+  `build_files/studio-plugins.txt`.
 
 ### CI
 
@@ -549,7 +572,7 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries and no IP addresses, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no forbidden entries and no IP addresses, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only our managed settings, with updates off and exactly the proxy variables from `proxy.env`. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization, Claude login, first-boot password flow in Boxes, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
@@ -600,6 +623,8 @@ VM test assertions (`tests/vm/checks.sh`):
     (`kwin_wayland --virtual`), fetches the SDK lists through Squid, makes no
     direct connection attempt, and in that first minute gets nothing refused
     except its plain-HTTP connectivity check. The test VM has 6 GiB for it.
+  - Studio's log from that run lists every plugin in `studio-plugins.txt` as
+    loaded.
 - **Claude Code.** Run as dev with an empty environment and a dummy API key,
   it calls `api.anthropic.com` through Squid (so the proxy came from the
   managed settings) and makes no direct attempt. What Squid refuses isn't
