@@ -7,6 +7,33 @@ itself from an image that only CI publishes.
 PLAN.md holds the roadmap, the decisions made so far and why, and the open
 questions. Read it before starting work, and update it when a decision changes.
 
+## How a large change is delivered
+
+Work bigger than one small PR is built whole first, then handed over in small
+steps:
+
+1. **Build the end state.** Do the whole change in a detached git worktree on
+   the persistent `~/.claude` volume (the scratchpad doesn't survive a
+   devcontainer rebuild), so `/workspace` stays free for the user. Subagents
+   take independent parts, each in a worktree of its own, and the lead agent
+   integrates their results.
+2. **Review it** with the steps in "Before handing changes over for review",
+   plus `/code-review xhigh`, and fix what's worth fixing.
+3. **Split it into small commits**, grouped into PRs in the order PLAN.md
+   gives. More small, reviewable commits beat one large diff, and a PR holds
+   several commits when they belong together. Each commit is a patch with its
+   commit message. Every state passes lint, the last state of each PR also
+   builds and passes the image tests, and workflow changes are commits of
+   their own.
+4. **Hand over one commit at a time.** Apply the next patch to `/workspace`
+   uncommitted and give its commit message. The user reviews, commits and
+   signs it, then asks for the next one.
+5. **At the end of a PR's chain**, follow "Before a PR is pushed or opened",
+   and propose the PR's title and description.
+6. **Continue after the user has merged and tested the PR.** Carry whatever
+   changed on the way (review fixes, the user's own edits) into the remaining
+   patches before handing over the next PR's first commit.
+
 ## Non-negotiables
 
 - **Base image** is the rolling `quay.io/fedora/fedora-kinoite:44` tag. Fedora
