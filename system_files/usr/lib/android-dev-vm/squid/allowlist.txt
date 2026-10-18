@@ -37,8 +37,9 @@ jitpack.io
 # GitHub (Adoptium's releases)
 api.foojay.io
 
-# GitHub
+# GitHub, and git over SSH on port 443 (android-dev-vm/ssh/github.conf)
 github.com
+ssh.github.com
 .githubusercontent.com
 
 # Claude Code's Context7 plugin: its MCP server, and the sign-in that server

@@ -81,9 +81,10 @@ These are known and accepted for now. Some have a planned fix.
   runs as a system service and forwards queries. That makes DNS a slow way to
   send data out. Planned: a local resolver that only answers for allowlisted
   zones.
-- **Allowlisted hosts that accept uploads.** `github.com`,
-  `*.githubusercontent.com`, the Anthropic API and claude.ai can all carry
-  data out, for example as a push to any GitHub repository. So can all of
+- **Allowlisted hosts that accept uploads.** `github.com` (and
+  `ssh.github.com`, git over SSH), `*.githubusercontent.com`, the Anthropic
+  API and claude.ai can all carry data out, for example as a push to any
+  GitHub repository. So can all of
   Google, which is allowed whole: Cloud Storage (`storage.googleapis.com`,
   where a signed URL lets anyone upload to a bucket, with no account in the
   VM), Drive, Apps Script and every other Google API. So can Context7
@@ -107,6 +108,11 @@ These are known and accepted for now. Some have a planned fix.
   Claude Code on the VM's loopback): use an account made for it, with email
   sign-in, not GitHub or Google, and sign out of the site in Firefox
   afterwards. Claude Code keeps only Context7's token.
+- **Keys and tokens in dev's home.** The same holds for an SSH key or a git
+  token there: every process of `dev` can push with it, wherever it's
+  allowed to. Git over SSH reaches GitHub only (`ssh.github.com`, port 443,
+  through Squid), and only with GitHub's pinned host keys. Prefer deploy keys
+  or fine-grained tokens limited to the repositories being worked on.
 - **Services on loopback.** The rule allows all loopback traffic, so `dev`
   reaches any local service, not only Squid. Today the ones that matter are
   Squid, the DNS stub and, in Boxes, spice-webdavd, which serves any folder

@@ -10,8 +10,8 @@ A project may make these rules stricter, never looser. Where a project's
 - You run as `dev`, which has no root and never gets it: no sudo, run0, pkexec
   or su. Don't try. If something needs root, say what and why, and the user
   does it as `admin`.
-- The network is HTTPS only, through a proxy that allows a list of domains.
-  When a download fails with a proxy refusal or a 403 on CONNECT, run
+- The network is HTTPS only, through a proxy that allows a list of domains,
+  plus git over SSH to GitHub (`git@github.com:`). When a download fails with a proxy refusal or a 403 on CONNECT, run
   `android-dev-denied`, then report the domain and why the project needs it.
   The list changes through a pull request to the image. Never work around
   it: no other proxies, mirrors, tunnels, vendored copies from elsewhere or

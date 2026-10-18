@@ -112,6 +112,10 @@ then shut the VM down and start it again.
   press Ctrl+L, type `webdav://localhost:9843/` and press Enter. To keep it
   in the sidebar, right-click it under the location bar and choose Add to
   Places. Anything that runs as `dev` can read and change what you share.
+- **Git with GitHub** works over HTTPS and over SSH (`git@github.com:…`),
+  which goes through the proxy to GitHub's SSH on port 443. Other SSH hosts
+  don't work. For pushing, prefer a deploy key or a fine-grained token (see
+  [docs/security-model.md](docs/security-model.md)).
 - **Don't sign in to accounts in the VM's Firefox**, GitHub above all: every
   process of `dev`, Claude Code included, could use that session (see
   [docs/security-model.md](docs/security-model.md)).

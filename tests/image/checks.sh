@@ -447,8 +447,8 @@ proxy_env=/usr/lib/android-dev-vm/proxy.env
 [[ "$(readlink -f /etc/claude-code/.claude/skills)" == "$managed/skills" ]]
 [[ "$(jq -r .env.DISABLE_UPDATES "$settings")" == 1 ]]
 [[ "$(jq -r .env.CLAUDE_CODE_PLUGIN_SEED_DIR "$settings")" == /usr/lib/claude-code-plugins ]]
-# A git source over HTTPS: for a "github" one, Claude Code tries SSH first,
-# which dev's rule refuses (seen in a VM).
+# A git source over HTTPS: for a "github" one, Claude Code clones over SSH
+# first, which fails without a key in dev's home.
 jq -e '.extraKnownMarketplaces["claude-plugins-official"].source ==
     {source: "git", url: "https://github.com/anthropics/claude-plugins-official.git"} and
   (.enabledPlugins | length > 0 and all(keys[]; endswith("@claude-plugins-official")))' \
@@ -476,6 +476,27 @@ for plugin in $(jq -r '.enabledPlugins | to_entries[] | select(.value == true) |
   read -r sha path < <(jq -r --arg p "$plugin" '.plugins[$p][0] | "\(.gitCommitSha) \(.installPath)"' "$seed/installed_plugins.json")
   [[ $path == "$seed/cache/"*"/${sha:0:12}" && -d $path ]] || { echo "      $plugin: $path"; bad=1; }
 done
+exit "$bad"
+EOF
+# ssh/github.conf: `ssh -G` shows the settings ssh would use, so this also
+# catches another config file setting them first (the first value wins). The
+# host keys must have the fingerprints GitHub publishes. The VM test proves
+# the route itself.
+check "ssh: GitHub goes through Squid to ssh.github.com:443, with GitHub's pinned keys" in_image <<'EOF'
+dir=/usr/lib/android-dev-vm/ssh
+bad=0
+for host in github.com ssh.github.com; do
+  config="$(setpriv --reuid=dev --regid=dev --init-groups env -i HOME=/ ssh -G -T "git@$host")"
+  for line in "hostname ssh.github.com" "port 443" \
+    "proxycommand /usr/bin/socat - PROXY:127.0.0.1:%h:%p,proxyport=3128" \
+    "hostkeyalias github.com" "globalknownhostsfile $dir/github-known-hosts" \
+    "userknownhostsfile /dev/null" "stricthostkeychecking true"; do
+    grep -qxF "$line" <<<"$config" || { echo "      $host: not in ssh -G: $line"; bad=1; }
+  done
+done
+fingerprints="$(ssh-keygen -lf "$dir/github-known-hosts" | awk '{print $2}' | LC_ALL=C sort | tr '\n' ' ')"
+[[ $fingerprints == "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s " ]] ||
+  { echo "      host keys: $fingerprints"; bad=1; }
 exit "$bad"
 EOF
 # The image's instructions for every project (PLAN.md, Claude Code). Claude

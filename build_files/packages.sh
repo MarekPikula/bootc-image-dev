@@ -9,7 +9,8 @@
 #     (system_files/usr/libexec/android-dev-vm/clipboard-to-x11).
 #   claude-code: from Anthropic's dnf repo, see below.
 # Already in Kinoite, and asserted by tests/image/checks.sh: bubblewrap and
-# socat, which Claude Code's optional sandbox needs.
+# socat, which Claude Code's optional sandbox needs. socat also carries git
+# over SSH to GitHub (system_files/usr/lib/android-dev-vm/ssh/github.conf).
 # Removed, unused in a QEMU VM:
 #   vpnc with its NetworkManager and Plasma plugins.
 #   usermode: the setuid userhelper, for console apps that ask for root's

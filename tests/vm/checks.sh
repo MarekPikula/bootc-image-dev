@@ -404,6 +404,32 @@ squid_tunnels() {
   awk -v host="$1" '$4 == "TCP_TUNNEL/200" && $7 == host' /var/log/squid/access.log | wc -l
 }
 
+# wait_tunnel HOST:PORT BEFORE: Squid has logged more tunnels to HOST:PORT
+# than BEFORE. It logs a tunnel when it closes, so this waits up to 10 s.
+wait_tunnel() {
+  local _
+  for _ in {1..10}; do
+    (("$(squid_tunnels "$1")" > $2)) && return 0
+    sleep 1
+  done
+  echo "      no tunnel to $1"
+  return 1
+}
+
+# GitHub over SSH, through Squid to ssh.github.com:443 (ssh/github.conf), with
+# no direct attempt. dev has no key, so GitHub refuses the login, which comes
+# only after the pinned host key checked out.
+dev_ssh_github() {
+  local tunnels stopped
+  tunnels="$(squid_tunnels ssh.github.com:443)"
+  stopped="$(dev_stopped_packets)"
+  as_dev env -i HOME=/var/home/dev PATH=/usr/bin ssh -T -o BatchMode=yes git@github.com
+  [[ $out == *"Permission denied (publickey)"* ]] || { echo "      rc $rc: $out"; return 1; }
+  (("$(dev_stopped_packets)" == stopped)) || { echo "      ssh tried direct connections"; return 1; }
+  wait_tunnel ssh.github.com:443 "$tunnels"
+}
+check "dev: GitHub over SSH through Squid, with GitHub's host key" dev_ssh_github
+
 # Android Studio, with dev's session environment, in a headless KWin. On first
 # start it fetches the SDK lists from dl.google.com: that must go through Squid
 # (Studio takes the proxy from JAVA_TOOL_OPTIONS), with no direct attempt, and
@@ -438,10 +464,8 @@ studio_uses_proxy() {
   # Then a little longer, for the marketplace and docs requests.
   ((ok == 0)) && sleep 30
   systemctl --user -M dev@ stop studio-check.service 2>/dev/null
-  # Squid logs a tunnel when it closes, and a connection Studio kept open
-  # closes only now.
-  ((ok == 0)) || { sleep 5; (("$(squid_tunnels dl.google.com:443)" > tunnels)) && ok=0; }
-  ((ok == 0)) || { echo "      no tunnel to dl.google.com within 3 minutes"; return 1; }
+  # A connection Studio kept open closes, and so gets logged, only now.
+  ((ok == 0)) || wait_tunnel dl.google.com:443 "$tunnels" || return 1
   (("$(dev_stopped_packets)" == stopped)) || { echo "      Studio tried direct connections"; return 1; }
   refused="$(tail -n "+$((log_lines + 1))" /var/log/squid/access.log |
     awk '$4 ~ /^TCP_DENIED\// && $7 !~ /^http:\/\/play\.google\.com\// { print $7 }' | sort -u)"
@@ -548,18 +572,12 @@ dev_claude() {
   ((rc != 124 && rc != 255)) || { echo "      rc $rc: $out"; return 1; }
 }
 claude_uses_proxy() {
-  local tunnels stopped _
+  local tunnels stopped
   tunnels="$(squid_tunnels api.anthropic.com:443)"
   stopped="$(dev_stopped_packets)"
   dev_claude || return 1
   (("$(dev_stopped_packets)" == stopped)) || { echo "      Claude Code tried direct connections"; return 1; }
-  # Squid logs a tunnel when it closes.
-  for _ in {1..10}; do
-    (("$(squid_tunnels api.anthropic.com:443)" > tunnels)) && return 0
-    sleep 1
-  done
-  echo "      no tunnel to api.anthropic.com, rc $rc: $out"
-  return 1
+  wait_tunnel api.anthropic.com:443 "$tunnels" || { echo "      rc $rc: $out"; return 1; }
 }
 check "Claude Code takes the proxy from its managed settings" claude_uses_proxy
 

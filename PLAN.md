@@ -85,6 +85,9 @@ system_files/              overlay copied to / (paths below are relative to /)
   etc/xdg/kioslaverc
   usr/lib/android-dev-vm/firefox/policies.json   Firefox policy: background services off
   etc/firefox/policies/policies.json             symlink to it, where Firefox looks first
+  usr/lib/android-dev-vm/ssh/github.conf         git over SSH to GitHub through Squid (ssh.github.com:443)
+  usr/lib/android-dev-vm/ssh/github-known-hosts  GitHub's published SSH host keys
+  etc/ssh/ssh_config.d/30-android-dev-vm-github.conf   symlink to github.conf
   usr/lib/android-dev-vm/claude-code/managed-settings.json   updates off, dev's proxy, plugins
   usr/lib/android-dev-vm/claude-code/instructions.md   Claude Code's instructions for every project
   usr/lib/android-dev-vm/claude-code/skills/     security-sweep, quality-sweep, ux-audit, emulator-test
@@ -203,6 +206,15 @@ README.md                  for the people running the VM
   - Claude Code's own updates need nothing extra, because the binary comes
     from the image.
   - Gradle distributions and toolchain JDKs come from GitHub.
+  - `ssh.github.com`: git over SSH. dev's rule refuses port 22, and Squid
+    allows only CONNECT to port 443, where GitHub also serves SSH. An
+    `ssh_config` drop-in (`/usr/lib/android-dev-vm/ssh/github.conf`, linked
+    from `/etc/ssh/ssh_config.d/`, where ssh reads system-wide settings)
+    sends `github.com` and `ssh.github.com` there through Squid with socat,
+    which the image has for Claude Code's sandbox. It trusts only GitHub's
+    published host keys, from a file in the image, so there's no question on
+    first use and a changed key fails. It applies to every user. Other SSH
+    hosts stay unreachable for dev.
   - `resources.jetbrains.com` is there because Studio asked for it in one
     longer run in a container, though not in the VM.
   - A Firefox policy switches off what would only be refused: updates (they
@@ -346,8 +358,9 @@ README.md                  for the people running the VM
     second start on (seen in a VM). A writable copy of the seed was
     ignored, so it seems to want it read-only, which `/usr` is.
   - The marketplace is a `git` source with the HTTPS URL. With a `github`
-    source, Claude Code tries SSH first, and dev's rule refuses that (seen
-    in a VM).
+    source, Claude Code clones over SSH first, which fails without a key in
+    dev's home (dev's rule refused it outright before git over SSH went
+    through Squid).
   - **Context7's sign-in.** Its server refuses anonymous clients (401),
     though the marketplace says otherwise. It wants an OAuth sign-in (or an
     API key, which the image can't ship) through `clerk.context7.com`,
@@ -358,7 +371,8 @@ README.md                  for the people running the VM
     is a manual test. Context7's queries are free text, so it's one more
     host that can carry data out (`docs/security-model.md`).
 - **Sandbox.** Claude Code's optional Bash sandbox needs bubblewrap and
-  socat. Both come with Kinoite, and the image checks assert they're there.
+  socat (which git over SSH uses too). Both come with Kinoite, and the image
+  checks assert they're there.
   bubblewrap isn't setuid. It uses user namespaces, where dev's sockets
   still belong to UID 1500 (the VM test checks the rule from inside one).
   The optional seccomp filter (an npm package) isn't installed.
@@ -743,7 +757,7 @@ separate so you can commit them on their own and push them from the host.
 | Layer | Where | What |
 |---|---|---|
 | Static | devcontainer and CI, via pre-commit | hadolint, shellcheck, actionlint, plus whitespace, YAML/JSON and private-key checks from `pre-commit-hooks`. |
-| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. systemd-firstboot runs Fedora's command plus `--chrome=no`. The clipboard bridge's user unit is pulled in from `/usr`. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only links to our managed settings, CLAUDE.md and skills. The settings turn updates off, have exactly the proxy variables from `proxy.env`, enable the official marketplace's Context7 and Superpowers, and point at the seed. Claude Code, run as dev against a fake API on loopback, sends the managed CLAUDE.md and every managed skill's name. The plugin seed holds every enabled plugin, in the directory named after its commit. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
+| Image | `podman run` against the built image, after `systemd-sysusers` | Accounts, UIDs and groups. No password hashes, `authorized_keys` or SSH host keys. No sudo for `dev`, `su` is wheel-only, and only wheel may run polkit's password helper. polkit: our rule sorts first, and dev gets `NO` for every registered action outside its allowlist. setuid/setgid files and capabilities match the reviewed list. `/dev/kvm` is world-accessible. The first-boot unit is enabled, root is locked (so there's no root-password prompt), and the expected units are masked. avahi is disabled, starts on our config, and that allows only `lo` and turns off wide-area DNS and the reflector. systemd-firstboot runs Fedora's command plus `--chrome=no`. The clipboard bridge's user unit is pulled in from `/usr`. Network: the nft rule and Squid config parse with the image's own `nft` and `squid` (no Squid warnings), the allowlist has no IP addresses or bare top-level domains, the rule and Squid are enabled from `/usr`, user sessions require the rule, systemd's tmpfiles entry creates `/run/nologin` at boot, pam_nologin guards the login stacks, and dev (not admin) gets the proxy environment. ssh sends `github.com` to `ssh.github.com:443` through Squid and trusts only the pinned host keys, which match GitHub's published fingerprints. Android Studio: the launcher, a valid desktop entry and platform updates off. Every plugin in `studio-plugins.txt` is installed and its build range includes Studio's build. JDK 25. Claude Code: `claude --version` runs, the package is signed with the pinned key, which is the only key besides Fedora's that rpm trusts, bubblewrap and socat are present, and `/etc/claude-code` holds only links to our managed settings, CLAUDE.md and skills. The settings turn updates off, have exactly the proxy variables from `proxy.env`, enable the official marketplace's Context7 and Superpowers, and point at the seed. Claude Code, run as dev against a fake API on loopback, sends the managed CLAUDE.md and every managed skill's name. The plugin seed holds every enabled plugin, in the directory named after its commit. Updates: the timer is enabled from `/usr`, its service runs exactly one command, `bootc upgrade --quiet` (no `--apply`), and `boot.automount` is masked. |
 | VM | CI (required), or locally on a `gh run download`ed qcow2 | See below. |
 | Manual | in GNOME Boxes, by hand | SDK download through the proxy, emulator with nested virtualization and hardware graphics, Claude login, the first-boot screens and password flow in Boxes, a shared folder in Dolphin, text copied both ways, and in dev's desktop session: power off, reboot and mount a USB stick without any password prompt. |
 
@@ -786,6 +800,9 @@ VM test assertions (`tests/vm/checks.sh`):
     `https://dl.google.com` and `https://api.anthropic.com` get CONNECT 200,
     `https://storage.googleapis.com` gets 200 too (the Flutter SDK), and
     `https://example.com` gets 403, which `android-dev-denied` lists.
+  - dev's `ssh -T git@github.com` reaches GitHub through Squid
+    (`ssh.github.com:443`) with no direct attempt, and gets as far as
+    GitHub refusing a login without a key, so the host key checked out.
   - dev's systemd --user environment has the proxy variables and
     `JAVA_TOOL_OPTIONS`, parsed whole from the generator.
 - **Android tooling.**
