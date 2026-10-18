@@ -3,7 +3,8 @@
 This is the roadmap for the bootc Android dev VM. CLAUDE.md lists the
 constraints that don't change.
 
-- Status: PRs 1–8 merged. Fixes from the first full review in progress.
+- Status: steps 1–9 merged. Step 10, a re-evaluation of the tooling, is
+  next.
 - Research checked against upstream docs on 2026-09-28.
 
 ## Decisions
@@ -17,7 +18,11 @@ constraints that don't change.
 | polkit | Deny-by-default rule for `dev`, with a short allowlist | Removes every admin prompt from dev's session, so Claude Code can't trigger a password dialog that the human might fill in. |
 | Claude Code | RPM from Anthropic's signed dnf repo (stable channel), installed under `/usr` | Updates arrive with the image, and `dev` can't replace the system's binary. It needs no extra runtime hosts. [Details](#claude-code) |
 | Signing | **Deferred** | Keyless identity pinning isn't possible in `policy.json` yet. [Details](#signing-future-pr) |
-| Linting | pre-commit: the linters as local hooks that run the sha256-pinned binaries, plus `pre-commit/pre-commit-hooks` pinned by commit | One config for the devcontainer, CI and an optional git hook. pre-commit can't hash-pin PyPI packages, so the hooks' `ruamel.yaml` dependency is pinned by version only. That gap is limited to lint tooling and never reaches the image. |
+| Linting | pre-commit: the linters as local hooks that run the sha256-pinned binaries, plus `pre-commit/pre-commit-hooks` pinned by commit. Step 10 runs every hook from the uv lock and makes them stricter. | One config for the devcontainer, CI and an optional git hook. pre-commit can't hash-pin PyPI packages, so the hooks' `ruamel.yaml` dependency is pinned by version only. That gap is limited to lint tooling and never reaches the image. |
+| Python (step 10) | One uv workspace and one `uv.lock`, with a hash for every package. What runs in the VM ships as a wheel in an image-owned venv on Kinoite's `python3`, with its commands on PATH. Everything parsed goes through a Pydantic model. mypy strict, ruff with every rule. | Typed, tested code instead of awk, jq and sed programs inside shell scripts. One lock pins the image's, the devcontainer's and CI's Python alike. |
+| Tests (step 10) | pytest on the host, through a typed runner: podman for the image, SSH for the VM | Single tests, attaching to a running VM, JUnit reports, and an end to checks that pass when a command in them fails. No VM test library fits: testinfra isn't typed and switches users only through sudo, the others are too heavy or don't fit. |
+| Task runner (step 10) | `just` | One entry point for the devcontainer, CI and the handoff steps, so all of them build and test the same way. |
+| Upgrades (step 10) | Dependabot (actions and `uv.lock`, with a cooldown), a `bump` helper for Studio and the plugins, and a skill that reviews each upgrade's security implications | Pins stay pinned, but moving them is cheap and gets the same review every time. Renovate can't compute the sha256 of a new Studio or plugin zip. |
 | DNS exfiltration | Documented in v1, hardened later | [Open questions](#open-questions) |
 
 ## Repository layout
@@ -746,11 +751,38 @@ separate so you can commit them on their own and push them from the host.
    - `docs/allowlist.md`: edit → PR → CI → staged update → reboot.
 9. **Claude Code instructions for every project.** The managed
    `CLAUDE.md`, the sweep skills and the official plugins (see Claude Code).
-10. **Later, each after discussion:** image signing, a DNS filtering resolver,
-   narrower GitHub hosts, automated Android Studio bump PRs, rechunking the
-   image (`rpm-ostree compose build-chunked-oci`) so updates download only
-   the packages that changed, and dropping the `boot.automount` mask once
-   bootc or ostree handle it.
+10. **Re-evaluation of the tooling** (decided 2026-10-18). Each item is a PR
+    of several small commits, built whole first and handed over one commit at
+    a time (CLAUDE.md, How a large change is delivered):
+    1. This roadmap, and how large changes are delivered.
+    2. Image and VM checks that could pass without testing anything.
+    3. A uv workspace, `just` as the single entry point, and strict linting:
+       ShellCheck's optional checks, hadolint at style level, zizmor, TOML,
+       symlink and Markdown checks. hadolint and actionlint come from one
+       sha256-pinned list for the devcontainer and CI. ⚙ The lint job uses
+       them.
+    4. The image checks as pytest tests, run from the host.
+    5. The VM checks as pytest tests: qemu and SSH from Python, single tests,
+       attaching to a running VM, and the coverage gaps (raw sockets,
+       lookalike domains, a login while `/run/nologin` exists).
+    6. Our Python as a wheel in the image, starting with `android-dev-denied`
+       and the Studio launcher.
+    7. The build steps in Python.
+    8. `set-passwords` in Python.
+    9. A `bump` helper for the pins, and a skill that reviews an upgrade's
+       security implications.
+    10. Stricter ShellCheck for the shell that's left (masked return values).
+    11. ⚙ CI: the reusable workflow renamed `.build-test.yml`, docs-only
+        changes neither build nor publish, the export overlaps the VM test,
+        and Dependabot.
+    12. Containerfile: the version label from the command line, and a cache
+        for the Studio download.
+    13. Rechunking the image (`rpm-ostree compose build-chunked-oci`), with
+        Studio, the plugin seed and the venv as layers of their own, so
+        weekly updates download only what changed.
+11. **Later, each after discussion:** image signing, a DNS filtering resolver,
+   narrower GitHub hosts, automated Android Studio bump PRs, and dropping the
+   `boot.automount` mask once bootc or ostree handle it.
 
 ## Testing
 
